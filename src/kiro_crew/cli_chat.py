@@ -41,6 +41,7 @@ from kiro_crew.providers.base import (
     LLMEvent,
     LLMProvider,
 )
+from kiro_crew.sandbox import warm_backend
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 from kiro_crew.sel import sel
 
@@ -388,6 +389,7 @@ async def _chat(message: str | None, model: str | None, agent: str | None = None
 
 def _run_chat(message: str | None, model: str | None, agent: str | None = None) -> None:
     """Run chat at the sync CLI boundary and render SIGINT as a clean exit."""
+    warm_backend()
     try:
         asyncio.run(_chat(message, model, agent=agent))
     except KeyboardInterrupt:

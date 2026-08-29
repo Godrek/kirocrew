@@ -107,6 +107,7 @@ ACP_CLIENT_CAPABILITIES: dict = {
 # ── ACP Backend Identifiers ──
 
 ACP_BACKEND_CLAUDE = "claude"
+ACP_BACKEND_CODEX = "codex"
 ACP_BACKEND_KAS = "kas"
 # The kiro-cli backend is spelled as the empty string throughout, so name it
 # rather than leaving every call site to infer it from "not claude".
@@ -118,15 +119,17 @@ ACP_BACKENDS_KNOWN = frozenset(
     {
         ACP_BACKEND_KIRO,
         ACP_BACKEND_CLAUDE,
+        ACP_BACKEND_CODEX,
         ACP_BACKEND_KAS,
     }
 )
-# What an operator may actually persist in ``agent.acp_backend``, which is a
-# narrower question than what the code understands: ``ACP_BACKEND_CLAUDE`` is a
-# dormant seam reached by its own provider, not something to select here. Config
+# What an operator may persist in ``agent.acp_backend``. Adapted harnesses are
+# opt-in here and receive no capabilities merely by becoming selectable. Config
 # resolution degrades an unselectable value to the default, so a typo costs a log
 # line rather than a gateway that will not start.
-ACP_BACKENDS_SELECTABLE = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS})
+ACP_BACKENDS_SELECTABLE = frozenset(
+    {ACP_BACKEND_KIRO, ACP_BACKEND_KAS, ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX}
+)
 
 # ── Capability membership (harness-parity H6, H7) ──
 # Every capability a backend may claim is an OPT-IN set here, never a negation at
@@ -204,6 +207,7 @@ ACP_BACKENDS_KIRO_IDENTITY_STORE = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS}
 # An absent label means kiro-cli, which is the default backend.
 PROVIDER_LABEL_DEFAULT = "acp"
 PROVIDER_LABEL_CLAUDE = "claude_code"
+PROVIDER_LABEL_CODEX = "codex"
 PROVIDER_LABEL_KAS = "kas"
 
 # KAS reads only fs.readTextFile / fs.writeTextFile / terminal from the top
