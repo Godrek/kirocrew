@@ -54,6 +54,7 @@ from kiro_crew.acp.liveness import (
 from kiro_crew.acp.prompt_blocks import build_prompt_blocks
 from kiro_crew.acp.types import (
     ACP_BACKEND_CLAUDE,
+    ACP_BACKEND_CODEX,
     ACP_BACKEND_KIRO,
     ACP_BACKENDS_INTERNAL_SANDBOX,
     ACP_BACKENDS_STEER,
@@ -154,6 +155,9 @@ DEFAULT_MODEL = "auto"
 
 KIRO_CLI_BIN = "kiro-cli"
 KIRO_CLI_SUBCMD = "acp"
+
+CODEX_ACP_BIN = "codex-acp"
+CODEX_ACP_NPM_PKG = "@agentclientprotocol/codex-acp"
 
 CLAUDE_ACP_BIN = "claude-agent-acp"
 # On-disk name of the Claude backend CLI.  The claude-agent-acp adapter
@@ -375,6 +379,7 @@ def _resolve_node_for_script(script_path: str) -> str | None:
 
 _UNRESOLVED: object = object()  # sentinel for "not yet resolved"
 _claude_acp_argv_cache: list[str] | None | object = _UNRESOLVED
+_codex_acp_argv_cache: list[str] | None | object = _UNRESOLVED
 
 
 def _vendored_claude_acp_roots(pkg_dir: Path | None = None) -> list[Path]:
@@ -529,6 +534,28 @@ def _resolve_claude_code_executable() -> str | None:
     # Casing-normalize (Windows): a `which`-resolved .EXE reaches the launcher shim
     # with its true on-disk name (see _normalize_exe_casing).
     return _normalize_exe_casing(shutil.which(CLAUDE_CODE_BIN, path=search_path))
+
+
+def _resolve_codex_acp_bin() -> list[str] | None:
+    """Resolve the codex-acp adapter for a local/headless installation.
+
+    Resolution order is explicit override, mise, then the augmented PATH.
+    codex-acp carries a compatible Codex dependency and can authenticate via
+    ChatGPT login, so an API key is not required for this backend.
+    """
+    override = os.environ.get("CODEX_AGENT_ACP_BIN")
+    if override and platform_compat.is_executable_file(override):
+        return [_normalize_exe_casing(override) or override]
+
+    mise_resolved = _mise_which(CODEX_ACP_BIN)
+    if mise_resolved:
+        return [_normalize_exe_casing(mise_resolved) or mise_resolved]
+
+    search_path = augmented_path(os.environ.get("PATH", ""))
+    on_path = shutil.which(CODEX_ACP_BIN, path=search_path)
+    if on_path:
+        return [_normalize_exe_casing(on_path) or on_path]
+    return None
 
 
 def _resolve_ssh_auth_sock(env: dict[str, str]) -> None:
@@ -2312,6 +2339,15 @@ class AcpClient:
         return self.backend == ACP_BACKEND_CLAUDE
 
     @property
+    def _is_codex(self) -> bool:
+        return self.backend == ACP_BACKEND_CODEX
+
+    @property
+    def _is_standard_acp(self) -> bool:
+        """True for protocol-v1 adapters served by one AcpClient process."""
+        return self.backend in {ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX}
+
+    @property
     def _is_kiro(self) -> bool:
         """True when this client drives kiro-cli (the AcpClient default).
 
@@ -2438,7 +2474,7 @@ class AcpClient:
             _rejected_log, _ = redact_exfiltration_urls(str(model_id))
             _rejected_log, _ = redact_credentials(_rejected_log)
             raise AcpModelUnavailable(_rejected_log, self._advertised_model_ids())
-        if self._is_claude:
+        if self._is_standard_acp:
             await self.set_config_option("model", model_id)
         else:
             await self._send_request(
@@ -2565,7 +2601,7 @@ class AcpClient:
             # unusable id here would re-offer it on every claim.
             self._model = DEFAULT_MODEL
             return
-        if self._is_claude:
+        if self._is_standard_acp:
             await self.set_config_option("model", self._model)
         else:
             await self._send_request(
@@ -2756,6 +2792,18 @@ class AcpClient:
                     f"script."
                 )
             argv: list[str] = claude_argv
+        elif self._is_codex:
+            global _codex_acp_argv_cache  # noqa: PLW0603
+            if _codex_acp_argv_cache is _UNRESOLVED:
+                _codex_acp_argv_cache = await asyncio.to_thread(_resolve_codex_acp_bin)
+            codex_argv = _codex_acp_argv_cache
+            if not isinstance(codex_argv, list) or not codex_argv:
+                raise AcpError(
+                    f"{CODEX_ACP_BIN} not found. Install it with "
+                    f"'npm i -g {CODEX_ACP_NPM_PKG}', or set "
+                    "CODEX_AGENT_ACP_BIN to the adapter executable."
+                )
+            argv = codex_argv
         else:
             try:
                 kiro_bin = await _resolve_kiro_bin_for_spawn()
@@ -2913,9 +2961,12 @@ class AcpClient:
             profile=RLIMIT_PROFILE_SESSION_HOST,
         )
         self._pid = self._process.pid
-        _spawn_label = (
-            "claude-agent-acp" if self._is_claude else f"{KIRO_CLI_BIN} {KIRO_CLI_SUBCMD}"
-        )
+        if self._is_claude:
+            _spawn_label = "claude-agent-acp"
+        elif self._is_codex:
+            _spawn_label = "codex-acp"
+        else:
+            _spawn_label = f"{KIRO_CLI_BIN} {KIRO_CLI_SUBCMD}"
         # Everything from here to the end of _spawn runs with a LIVE subprocess
         # that nothing has recorded yet, so every step must be guarded. Without
         # this, any exception in the window — finish_suspended_spawn, the
@@ -3043,7 +3094,9 @@ class AcpClient:
             self._stderr_lines.append(text)
             redacted, _ = redact_exfiltration_urls(text)
             redacted, _ = redact_credentials(redacted)
-            _bin_label = "claude-acp" if self._is_claude else KIRO_CLI_BIN
+            _bin_label = (
+                "claude-acp" if self._is_claude else "codex-acp" if self._is_codex else KIRO_CLI_BIN
+            )
             logger.warning("%s stderr: %s", _bin_label, redacted)
         if suppressed:
             # Flush the residual count once the stream closes so the final burst
@@ -3374,7 +3427,7 @@ class AcpClient:
         """Handshake: initialize → session/load or session/new → set_mode → set_model."""
         # 1. Initialize
         protocol_version: int | str = (
-            PROTOCOL_VERSION_CLAUDE if self._is_claude else PROTOCOL_VERSION
+            PROTOCOL_VERSION_CLAUDE if self._is_standard_acp else PROTOCOL_VERSION
         )
         init_id = await self._send_request(
             METHOD_INITIALIZE,
@@ -5183,7 +5236,7 @@ class AcpClient:
                 logger.debug("usage_update missing used/size: %s", update)
         elif kind == UPDATE_CONFIG_OPTION:
             self._handle_config_option_update(msg)
-        elif self._is_claude and kind and kind not in KNOWN_SESSION_UPDATES:
+        elif self._is_standard_acp and kind and kind not in KNOWN_SESSION_UPDATES:
             logger.debug("Unhandled session update type: %s", kind)
 
     async def _maybe_audit_tool_call(self, tool_event: "AcpEvent") -> None:

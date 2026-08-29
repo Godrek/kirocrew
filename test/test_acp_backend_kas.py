@@ -1,6 +1,6 @@
 """ACP backend selection: the ``kas`` (kiro-agent) backend identifier.
 
-KAS is a third ACP backend alongside kiro-cli and claude-agent-acp. It is
+KAS is an ACP backend alongside kiro-cli, claude-agent-acp, and codex-acp. It is
 selected by ``agent.acp_backend`` and is inert until explicitly configured, so
 these tests pin two things: that the selector reaches the client, and that the
 DEFAULT configuration still resolves to kiro-cli.
@@ -25,10 +25,12 @@ from kiro_crew.acp.runtime import AcpRuntime
 from kiro_crew.acp.session_provider import AcpSessionProvider
 from kiro_crew.acp.types import (
     ACP_BACKEND_CLAUDE,
+    ACP_BACKEND_CODEX,
     ACP_BACKEND_KAS,
     ACP_BACKEND_KIRO,
     ACP_BACKENDS_KNOWN,
     PROVIDER_LABEL_CLAUDE,
+    PROVIDER_LABEL_CODEX,
     PROVIDER_LABEL_DEFAULT,
     PROVIDER_LABEL_KAS,
 )
@@ -48,13 +50,14 @@ def _build_provider(backend: str) -> AcpProvider:
 
 
 class TestBackendPredicates:
-    """The three predicates are mutually exclusive and total over the known set."""
+    """The four backend predicates are mutually exclusive and total."""
 
     def test_empty_backend_is_kiro(self):
         provider = _build_provider(ACP_BACKEND_KIRO)
         assert provider.is_kiro_backend is True
         assert provider.is_kas_backend is False
         assert provider.is_claude_backend is False
+        assert provider.is_codex_backend is False
         assert provider.is_acp_runtime_backend is True
 
     def test_kas_backend(self):
@@ -62,6 +65,7 @@ class TestBackendPredicates:
         assert provider.is_kas_backend is True
         assert provider.is_kiro_backend is False
         assert provider.is_claude_backend is False
+        assert provider.is_codex_backend is False
         assert provider.is_acp_runtime_backend is True
 
     def test_claude_backend_unchanged(self):
@@ -69,6 +73,15 @@ class TestBackendPredicates:
         assert provider.is_claude_backend is True
         assert provider.is_kiro_backend is False
         assert provider.is_kas_backend is False
+        assert provider.is_codex_backend is False
+        assert provider.is_acp_runtime_backend is False
+
+    def test_codex_backend(self):
+        provider = _build_provider(ACP_BACKEND_CODEX)
+        assert provider.is_codex_backend is True
+        assert provider.is_kiro_backend is False
+        assert provider.is_kas_backend is False
+        assert provider.is_claude_backend is False
         assert provider.is_acp_runtime_backend is False
 
     @pytest.mark.parametrize("backend", sorted(ACP_BACKENDS_KNOWN))
@@ -77,17 +90,23 @@ class TestBackendPredicates:
         held = [
             provider.is_kiro_backend,
             provider.is_claude_backend,
+            provider.is_codex_backend,
             provider.is_kas_backend,
         ]
         assert sum(held) == 1
 
-    @pytest.mark.parametrize("backend", sorted(ACP_BACKENDS_KNOWN))
-    def test_acp_runtime_backend_is_the_positive_form_of_not_claude(self, backend):
-        # The four provider sites that used to read ``not is_claude_backend``
-        # now read ``is_acp_runtime_backend``; the two must stay equivalent for
-        # every known backend so the conversion is behavior-preserving.
+    @pytest.mark.parametrize(
+        ("backend", "expected"),
+        [
+            (ACP_BACKEND_KIRO, True),
+            (ACP_BACKEND_KAS, True),
+            (ACP_BACKEND_CLAUDE, False),
+            (ACP_BACKEND_CODEX, False),
+        ],
+    )
+    def test_acp_runtime_backend_membership_is_explicit(self, backend, expected):
         provider = _build_provider(backend)
-        assert provider.is_acp_runtime_backend is (not provider.is_claude_backend)
+        assert provider.is_acp_runtime_backend is expected
 
 
 class TestUnknownBackendRejected:
@@ -106,6 +125,7 @@ class TestUnknownBackendRejected:
         message = str(exc.value)
         assert ACP_BACKEND_KAS in message
         assert ACP_BACKEND_CLAUDE in message
+        assert ACP_BACKEND_CODEX in message
 
 
 class TestProviderLabel:
@@ -114,6 +134,7 @@ class TestProviderLabel:
     def test_labels_each_backend(self):
         assert provider_label(_build_provider(ACP_BACKEND_KIRO)) == PROVIDER_LABEL_DEFAULT
         assert provider_label(_build_provider(ACP_BACKEND_CLAUDE)) == PROVIDER_LABEL_CLAUDE
+        assert provider_label(_build_provider(ACP_BACKEND_CODEX)) == PROVIDER_LABEL_CODEX
         assert provider_label(_build_provider(ACP_BACKEND_KAS)) == PROVIDER_LABEL_KAS
 
     def test_non_acp_provider_falls_back_to_the_default(self):
@@ -214,9 +235,7 @@ class TestConfigRoundTrip:
         Asserted through a selectable value, since an unselectable one degrades
         and so cannot distinguish 'consumed' from 'dropped'.
         """
-        cfg = _load_agent_config(
-            {"acp_backend": ACP_BACKEND_KIRO, "streaming": False}, tmp_path
-        )
+        cfg = _load_agent_config({"acp_backend": ACP_BACKEND_KIRO, "streaming": False}, tmp_path)
         assert cfg.agent.acp_backend == ACP_BACKEND_KIRO
         assert cfg.agent.streaming is False
 
