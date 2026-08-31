@@ -6346,7 +6346,8 @@
       "auto_default": "Par défaut",
       "credit_multiplier": "{{value}} le coût en crédits d'Auto",
       "credit_multiplier_baseline": "{{value}}, le coût en crédits de référence",
-      "no_matches": "Aucun résultat"
+      "no_matches": "Aucun résultat",
+      "applies_to_next_session": "Ce backend ne peut pas changer le modèle d'une session en cours. Votre choix s'appliquera à la prochaine session."
     },
     "modelEffortDropdown": {
       "default_for_agent": "Modèle par défaut pour <agent/>",
@@ -11785,9 +11786,11 @@
         "backend_kiro_cli": "Kiro CLI",
         "backend_claude_code": "Claude Code",
         "backend_codex": "Codex",
-        "backend_models_not_exposed": "Ce backend ne propose pas de sélection de modèle ici. Les paramètres de modèle Kiro sont masqués, car ils ne contrôlent pas ce backend.",
         "failed_to_save_agent_backend": "Impossible d’enregistrer le backend de l’agent",
-        "backend_external": "Backend externe ({{backend}})"
+        "backend_external": "Backend externe ({{backend}})",
+        "backend_default_model_description": "Le modèle avec lequel démarrent les nouvelles sessions {{backend}}.",
+        "backend_default_model_hint": "Par défaut, hérite du modèle fourni par {{backend}}. S'applique aux nouvelles sessions.",
+        "backend_selects_its_own_model": "{{backend}} choisit son propre modèle. {{productName}} n'a pas de liste de modèles pour ce backend et n'affichera pas celle d'un autre."
       },
       "computerUsePanel": {
         "accessibility": "Accessibilité",

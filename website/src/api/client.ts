@@ -28,6 +28,7 @@ import {
 import { beginArtifactWrite, endArtifactWrite } from '../lib/artifactWrites'
 import { installApiTransport } from './apiTransport'
 import type { SessionSummary } from '../types/sessionSummary'
+import type { ModelCapabilities, ModelSwitchScope } from '../providers/acpBackends'
 import { queryClient } from './queryClient'
 import { getStoredConsent } from '../utils/themeConsent'
 import { recordError, parseErrorCode, requestPath } from '../utils/errorReport'
@@ -2225,14 +2226,37 @@ export const api = {
     put('/api/agents/' + encodeURIComponent(name), body).then(j),
   deleteKirocrewAgent: (name: string) =>
     del('/api/agents/' + encodeURIComponent(name)).then(j),
-  models: () => fetch('/api/models').then(j),
+  // `backend` selects WHOSE model vocabulary to return. It is sent whenever the
+  // caller knows the backend — including for kiro, whose id is the empty string:
+  // the server resolves `?backend=` by PRESENCE, so an explicitly empty value
+  // means "kiro" while an omitted parameter means "use the configured default".
+  // Passing `undefined` is how a caller says it does not know.
+  models: (backend?: string) =>
+    fetch('/api/models' + (backend === undefined ? '' : '?backend=' + encodeURIComponent(backend))).then(j),
+  modelCapabilities: (opts: { slot?: string; backend?: string } = {}) => {
+    const params = new URLSearchParams()
+    // Slot first: a bound slot's LIVE backend outranks any configured default,
+    // which is what keeps an existing session describing itself correctly after
+    // the default changes.
+    if (opts.slot) params.set('slot', opts.slot)
+    if (opts.backend !== undefined) params.set('backend', opts.backend)
+    const qs = params.toString()
+    return fetch('/api/model-capabilities' + (qs ? '?' + qs : '')).then(j) as Promise<ModelCapabilities>
+  },
   effortLevels: (slot?: string) =>
     fetch('/api/effort-levels' + (slot ? '?slot=' + encodeURIComponent(slot) : '')).then(j) as Promise<string[]>,
   slashCommands: () => fetch('/api/slash-commands').then(j),
   chatSlotAgent: (slot: string, agent: string) =>
     post('/api/chat/slots/' + encodeURIComponent(slot) + '/agent', { agent }).then(j) as Promise<{ ok?: boolean; agent?: string; workspace?: string }>,
-  chatSlotModel: (slot: string, model: string) =>
-    post('/api/chat/slots/' + encodeURIComponent(slot) + '/model', { model }).then(j) as Promise<{ ok?: boolean; model?: string }>,
+  /** Set a slot's model.
+   *
+   *  `scope` must be the one this backend's capabilities reported. Sending
+   *  `next_session` records the pick and leaves the running session alone;
+   *  omitting it (or sending `live_session`) lets the server switch in place and
+   *  fall back to a session reset when it cannot. Passing the wrong one is how a
+   *  picker promises "applies to your next session" and then restarts the chat. */
+  chatSlotModel: (slot: string, model: string, scope?: ModelSwitchScope) =>
+    post('/api/chat/slots/' + encodeURIComponent(slot) + '/model', { model, ...(scope ? { scope } : {}) }).then(j) as Promise<{ ok?: boolean; model?: string; scope?: ModelSwitchScope }>,
   chatSlotsModel: (model: string, skip_running: boolean) =>
     post('/api/chat/slots/model', { model, skip_running }).then(j) as Promise<{ ok: boolean; model: string; switched: string[]; skipped_running: string[]; unchanged: string[]; failed: string[] }>,
   chatSlotReasoningEffort: (slot: string, reasoning_effort: string) =>

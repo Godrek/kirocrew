@@ -6448,7 +6448,8 @@
       "auto_default": "По умолчанию",
       "credit_multiplier": "{{value}} от стоимости Auto в кредитах",
       "credit_multiplier_baseline": "{{value}}, базовая стоимость в кредитах",
-      "no_matches": "Совпадений нет"
+      "no_matches": "Совпадений нет",
+      "applies_to_next_session": "Этот бэкенд не может изменить модель у запущенной сессии. Ваш выбор применится к следующей сессии."
     },
     "modelEffortDropdown": {
       "default_for_agent": "Модель по умолчанию для <agent/>",
@@ -11951,9 +11952,11 @@
         "backend_kiro_cli": "Kiro CLI",
         "backend_claude_code": "Claude Code",
         "backend_codex": "Codex",
-        "backend_models_not_exposed": "Этот бэкенд не предоставляет здесь выбор модели. Настройки моделей Kiro скрыты, поскольку они не управляют этим бэкендом.",
         "failed_to_save_agent_backend": "Не удалось сохранить бэкенд агента",
-        "backend_external": "Внешний бэкенд ({{backend}})"
+        "backend_external": "Внешний бэкенд ({{backend}})",
+        "backend_default_model_description": "С какой моделью запускаются новые сессии {{backend}}.",
+        "backend_default_model_hint": "По умолчанию наследуется модель, которую предоставляет {{backend}}. Применяется к новым сессиям.",
+        "backend_selects_its_own_model": "{{backend}} выбирает модель самостоятельно. У {{productName}} нет списка моделей для этого бэкенда, и список другого бэкенда показан не будет."
       },
       "computerUsePanel": {
         "accessibility": "Универсальный доступ",

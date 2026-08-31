@@ -30,7 +30,9 @@ class TestStoreSessionConfig:
     def test_ignores_non_list_config_options(self):
         client = AcpClient()
         client._store_session_config({"configOptions": "invalid"})
-        assert client._acp_config_options == []
+        # Untouched: a malformed payload reported nothing, which is None rather
+        # than an empty list — the latter would mean the backend answered "none".
+        assert client._acp_config_options is None
 
     def test_calls_sync_effort_levels(self):
         client = AcpClient()
@@ -63,19 +65,25 @@ class TestHandleConfigOptionUpdate:
         client = AcpClient()
         msg = JsonRpcMessage(method="session/update", params={"update": "not a dict"})
         client._handle_config_option_update(msg)
-        assert client._acp_config_options == []
+        # Untouched: a malformed payload reported nothing, which is None rather
+        # than an empty list — the latter would mean the backend answered "none".
+        assert client._acp_config_options is None
 
     def test_ignores_missing_config_options(self):
         client = AcpClient()
         msg = JsonRpcMessage(method="session/update", params={"update": {"other": "stuff"}})
         client._handle_config_option_update(msg)
-        assert client._acp_config_options == []
+        # Untouched: a malformed payload reported nothing, which is None rather
+        # than an empty list — the latter would mean the backend answered "none".
+        assert client._acp_config_options is None
 
     def test_ignores_none_params(self):
         client = AcpClient()
         msg = JsonRpcMessage(method="session/update", params=None)
         client._handle_config_option_update(msg)
-        assert client._acp_config_options == []
+        # Untouched: a malformed payload reported nothing, which is None rather
+        # than an empty list — the latter would mean the backend answered "none".
+        assert client._acp_config_options is None
 
 
 class TestGetValidEffortLevels:
@@ -127,10 +135,21 @@ class TestSupportsConfigOption:
 
     def test_true_when_no_options_reported_yet(self):
         # No options reported yet → don't permanently treat as unsupported
-        # (a backend may advertise them lazily after the first turn).
+        # (a backend may advertise them lazily after the first turn). `None` is
+        # what "not reported" means; an empty LIST is the backend answering that
+        # it has none, which is the opposite and returns False.
+        client = AcpClient()
+        client._acp_config_options = None
+        assert client.supports_config_option("effort") is True
+
+    def test_false_when_reported_empty(self):
+        # A build that answers `configOptions: []` has said it offers none.
+        # Reading that as "not asked yet" reports it as supporting the option,
+        # and the caller then sends set_config_option, gets "Unknown config
+        # option", and falls back to resetting the session.
         client = AcpClient()
         client._acp_config_options = []
-        assert client.supports_config_option("effort") is True
+        assert client.supports_config_option("effort") is False
 
     def test_skips_non_dict_entries(self):
         client = AcpClient()

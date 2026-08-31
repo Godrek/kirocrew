@@ -97,13 +97,13 @@ describe('AcpAdapter context-window resolution', () => {
       { model_name: 'auto', context_window_tokens: 1_000_000 },
     ])
     const adapter = new AcpAdapter()
-    await adapter.fetchAvailableModels()
+    await adapter.fetchAvailableModels('')
     expect(adapter.getContextWindow('auto')).toBe(1_000_000)
     // The auto-only degraded fallback quotes the same learned figure instead of
     // hardcoding 200K (model_tokens.json has no 'auto' entry at all).
     ;(api.models as any).mockRejectedValue(new Error('503'))
     localStorage.clear()
-    const degraded = await adapter.fetchAvailableModels()
+    const degraded = await adapter.fetchAvailableModels('')
     expect(degraded).toHaveLength(1)
     expect(degraded[0].name).toBe('auto')
     expect(degraded[0].contextWindow).toBe(1_000_000)

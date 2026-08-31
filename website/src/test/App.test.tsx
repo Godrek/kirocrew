@@ -1636,6 +1636,19 @@ describe('onCycleApprovalMode and onCyclePrevAgent shortcuts', () => {
   })
 })
 
+/** The server's capability answer for a kiro-backed slot, as the endpoint
+ *  returns it. `backend: ''` IS kiro, and is what tells the out-of-React
+ *  shortcut which model list belongs to this slot. */
+const KIRO_CAPS = {
+  backend: '',
+  catalog: 'kiro_cli',
+  registry_provider: 'acp',
+  selectable: true,
+  runtime_switch: true,
+  switch_scope: 'live_session',
+  reasoning_effort: true,
+}
+
 describe('Alt+Shift+S/X model cycling via React Query cache', () => {
   it('does not call chatSlotModel on Alt+Shift+S without cache', async () => {
     const { api } = await import('../api/client')
@@ -1670,11 +1683,16 @@ describe('Alt+Shift+S/X model cycling via React Query cache', () => {
     store.dispatch({ type: 'dashboard/sseSlots', payload: [{ key: 'slot-1', messages: 0, running: false, model: 'auto' }] })
     store.dispatch({ type: 'chat/setActiveSlot', payload: 'slot-1' })
     const { queryClient } = renderWithProviders(<App />, { route: '/chat' })
-    queryClient.setQueryData(['available-models', 'acp'], [{ name: 'auto' }, { name: 'opus' }, { name: 'sonnet' }])
+    // Both entries the shortcut reads, keyed exactly as the pickers key them.
+    // The capability answer is what names the backend for an UNBOUND slot —
+    // cache cardinality cannot, because entries outlive the surfaces that
+    // fetched them, so visiting two backends would leave the shortcut dead.
+    queryClient.setQueryData(['available-models', 'acp', ''], [{ name: 'auto' }, { name: 'opus' }, { name: 'sonnet' }])
+    queryClient.setQueryData(['model-capabilities', 'slot-1', null], KIRO_CAPS)
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'S', code: 'KeyS', altKey: true, shiftKey: true, bubbles: true }))
     })
-    expect(api.chatSlotModel).toHaveBeenCalledWith('slot-1', 'opus')
+    expect(api.chatSlotModel).toHaveBeenCalledWith('slot-1', 'opus', 'live_session')
   })
 
   it('cycles to previous model on Alt+Shift+X', async () => {
@@ -1684,11 +1702,30 @@ describe('Alt+Shift+S/X model cycling via React Query cache', () => {
     store.dispatch({ type: 'dashboard/sseSlots', payload: [{ key: 'slot-1', messages: 0, running: false, model: 'opus' }] })
     store.dispatch({ type: 'chat/setActiveSlot', payload: 'slot-1' })
     const { queryClient } = renderWithProviders(<App />, { route: '/chat' })
-    queryClient.setQueryData(['available-models', 'acp'], [{ name: 'auto' }, { name: 'opus' }, { name: 'sonnet' }])
+    queryClient.setQueryData(['available-models', 'acp', ''], [{ name: 'auto' }, { name: 'opus' }, { name: 'sonnet' }])
+    queryClient.setQueryData(['model-capabilities', 'slot-1', null], KIRO_CAPS)
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', code: 'KeyX', altKey: true, shiftKey: true, bubbles: true }))
     })
-    expect(api.chatSlotModel).toHaveBeenCalledWith('slot-1', 'auto')
+    expect(api.chatSlotModel).toHaveBeenCalledWith('slot-1', 'auto', 'live_session')
+  })
+
+  it('does no-op rather than guess when the backend is unknown', async () => {
+    // No capability answer and no binding means the slot's harness is genuinely
+    // unknown. Cycling anyway would step it through whichever list happened to
+    // be cached — possibly another harness's, every id of which its own wire
+    // rejects.
+    const { api } = await import('../api/client')
+    const { store } = await import('../store')
+    ;(api.chatSlotModel as ReturnType<typeof vi.fn>).mockClear()
+    store.dispatch({ type: 'dashboard/sseSlots', payload: [{ key: 'slot-1', messages: 0, running: false, model: 'auto' }] })
+    store.dispatch({ type: 'chat/setActiveSlot', payload: 'slot-1' })
+    const { queryClient } = renderWithProviders(<App />, { route: '/chat' })
+    queryClient.setQueryData(['available-models', 'acp', 'codex'], [{ name: 'gpt-5.6-codex' }])
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'S', code: 'KeyS', altKey: true, shiftKey: true, bubbles: true }))
+    })
+    expect(api.chatSlotModel).not.toHaveBeenCalled()
   })
 })
 

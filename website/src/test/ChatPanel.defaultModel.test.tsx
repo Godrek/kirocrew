@@ -8,8 +8,18 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
 
-const { patchConfigMock, kirocrewConfigMock, modelsMock } = vi.hoisted(() => ({
+const { patchConfigMock, kirocrewConfigMock, modelsMock, modelCapabilitiesMock } = vi.hoisted(() => ({
   patchConfigMock: vi.fn(() => Promise.resolve({})),
+  // Settings asks about a BACKEND (it configures a harness that may have no
+  // session at all), unlike the composer which asks about a slot. Default is
+  // "no vocabulary": that is what an unmocked adapted harness looks like, and
+  // it is the state the truthful "selects its own model" copy exists for.
+  modelCapabilitiesMock: vi.fn(() =>
+    Promise.resolve({
+      backend: '', catalog: 'none', registry_provider: '',
+      selectable: false, runtime_switch: false, switch_scope: 'none', reasoning_effort: false,
+    })
+  ),
   kirocrewConfigMock: vi.fn(() =>
     Promise.resolve({ agent: { model: 'auto', reasoning_effort: '' } })
   ),
@@ -27,6 +37,7 @@ vi.mock('../api/client', () => ({
     dashboardConfig: () => Promise.resolve({ restore_sessions: false, restore_window_minutes: 30, merge_queued_messages: false, widget_density: 'more' }),
     kirocrewConfig: kirocrewConfigMock,
     models: modelsMock,
+    modelCapabilities: modelCapabilitiesMock,
     patchConfig: patchConfigMock,
     updateDashboardConfig: () => Promise.resolve({}),
     tipsStatus: () => Promise.resolve({ enabled_config: true, opted_out: false }),
@@ -167,10 +178,24 @@ describe('ChatPanel — ACP backend', () => {
   })
 
   it('renders an unsupported persisted backend truthfully and hides Kiro models', async () => {
+    seed({ acp_backend: 'some-byo-harness', model: 'claude-opus-4.8' })
+    wrap(<ChatPanel />)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Agent backend' })).toHaveTextContent('External backend (some-byo-harness)'))
+    expect(screen.queryByRole('combobox', { name: 'Default Model' })).not.toBeInTheDocument()
+  })
+
+  it('treats KAS as the kiro model family, not as an adapted harness', async () => {
+    // KAS is kiro-cli behind a relay: the server's `model_for_backend` resolves
+    // it to `agent.model`, so a frontend testing `backend === ''` would send a
+    // KAS user down the adapted branch — where the config key is unknown and the
+    // pick is written to `''`, a save that reports success and changes nothing.
     seed({ acp_backend: 'kas', model: 'claude-opus-4.8' })
     wrap(<ChatPanel />)
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Agent backend' })).toHaveTextContent('External backend (kas)'))
-    expect(screen.queryByRole('combobox', { name: 'Default Model' })).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Default Model' })).toHaveTextContent('claude-opus-4.8'))
+    // And never the adapted branch's own card, which would write to a
+    // `backend_models.kas` key the server does not read.
+    expect(screen.queryByText(/selects its own model/)).not.toBeInTheDocument()
   })
 
   it('writes the selected backend through agent.acp_backend', async () => {
@@ -179,6 +204,101 @@ describe('ChatPanel — ACP backend', () => {
     await openSelect('Agent backend')
     fireEvent.click(screen.getByRole('option', { name: 'Codex' }))
     await waitFor(() => expect(patchConfigMock).toHaveBeenCalledWith('agent.acp_backend', 'codex'))
+  })
+
+  it('states the truth when a backend has no model vocabulary', async () => {
+    // Not an empty dropdown, and above all not another backend's list.
+    seed({ acp_backend: 'codex', model: 'claude-opus-4.8' })
+    wrap(<ChatPanel />)
+    expect(await screen.findByText(/Codex selects its own model/)).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Default Model' })).not.toBeInTheDocument()
+  })
+})
+
+/** Wait until the panel has committed to a backend before reading its controls.
+ *
+ *  While the config query is in flight `acp_backend` reads as '' — the KIRO
+ *  backend — so the panel renders the kiro card first and swaps to the adapted
+ *  one when the response lands. A bare findByRole resolves against that first
+ *  render and asserts on the wrong card. */
+async function awaitBackend(label: string) {
+  await waitFor(() =>
+    expect(screen.getByRole('combobox', { name: 'Agent backend' })).toHaveTextContent(label))
+}
+
+describe('ChatPanel — adapted-harness default model', () => {
+  beforeEach(() => {
+    patchConfigMock.mockClear()
+    modelCapabilitiesMock.mockImplementation(() =>
+      Promise.resolve({
+        backend: 'claude', catalog: 'registry', registry_provider: 'claude_code',
+        selectable: true, runtime_switch: true, switch_scope: 'live_session',
+        reasoning_effort: true,
+      }) as never,
+    )
+    modelsMock.mockImplementation(() =>
+      Promise.resolve([
+        { model_name: 'auto', description: 'Default' },
+        { model_name: 'opus-4.8-1m', description: 'Opus 4.8' },
+      ]) as never,
+    )
+  })
+
+  it('offers a picker built from THAT backend, not kiro', async () => {
+    seed({ acp_backend: 'claude', model: 'claude-opus-4.8' })
+    wrap(<ChatPanel />)
+    await awaitBackend('Claude Code')
+    const names = (await openSelect('Default Model')).map(o => o.textContent)
+    expect(names).toContain('opus-4.8-1m')
+    // `agent.model` is the KIRO default and must not leak into this namespace.
+    expect(names).not.toContain('claude-opus-4.8')
+  })
+
+  it('fetches the list under the selected backend key', async () => {
+    seed({ acp_backend: 'claude', model: 'claude-opus-4.8' })
+    wrap(<ChatPanel />)
+    await waitFor(() => expect(modelsMock).toHaveBeenCalledWith('claude'))
+  })
+
+  it("writes to that backend's own namespace, never agent.model", async () => {
+    seed({ acp_backend: 'claude', model: 'claude-opus-4.8' })
+    wrap(<ChatPanel />)
+    await awaitBackend('Claude Code')
+    await openSelect('Default Model')
+    fireEvent.click(screen.getByRole('option', { name: 'opus-4.8-1m' }))
+    await waitFor(() =>
+      expect(patchConfigMock).toHaveBeenCalledWith('agent.backend_models.claude', 'opus-4.8-1m'))
+    expect(patchConfigMock).not.toHaveBeenCalledWith('agent.model', expect.anything())
+  })
+
+  it("shows this backend's own saved pick, not the kiro one", async () => {
+    seed({
+      acp_backend: 'claude',
+      model: 'claude-opus-4.8',
+      backend_models: { claude: 'opus-4.8-1m' },
+    })
+    wrap(<ChatPanel />)
+    await awaitBackend('Claude Code')
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Default Model' }))
+        .toHaveTextContent('opus-4.8-1m'))
+  })
+
+  it('hides the effort row for a backend with no effort control', async () => {
+    // Kiro's reasoning-effort semantics are not portable by assumption.
+    modelCapabilitiesMock.mockImplementation(() =>
+      Promise.resolve({
+        backend: 'codex', catalog: 'advertised', registry_provider: '',
+        selectable: true, runtime_switch: true, switch_scope: 'live_session',
+        reasoning_effort: false,
+      }) as never,
+    )
+    seed({ acp_backend: 'codex', model: 'claude-opus-4.8' })
+    wrap(<ChatPanel />)
+    await awaitBackend('Codex')
+    await waitFor(() =>
+      expect(screen.queryByRole('combobox', { name: 'Default Reasoning Effort' }))
+        .not.toBeInTheDocument())
   })
 })
 

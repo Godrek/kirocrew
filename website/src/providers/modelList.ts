@@ -49,6 +49,15 @@ export function isPricedMultiplier(value: number | undefined): value is number {
 export function withAutoFirst(models: ModelInfo[]): ModelInfo[] {
   const live = models.find(m => m.name === 'auto')
   const rest = models.filter(m => m.name && m.name !== 'auto')
+  // Hoist an Auto row, never invent one. Whether a backend HAS an id meaning
+  // "let the server choose" is the backend's answer, and `/api/models` already
+  // gives it by including or omitting the row: kiro advertises one, and
+  // claude-agent-acp declares an empty id, so there is nothing to send. Adding
+  // a synthetic row for a backend that omitted it puts back the exact option
+  // the server removed — and it is the worst one to get wrong, because a pick
+  // of it cannot be a config-option switch and falls back to resetting the
+  // user's session.
+  if (!live) return rest
   // `description: ''` rather than the English word: the picker renders Auto's
   // short label from a catalog key at render time
   // (`components.modelDropdownList.auto_default`). Carrying the literal here

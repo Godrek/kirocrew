@@ -328,6 +328,60 @@ def coerce_role_models(raw: object) -> dict[str, str]:
     return out
 
 
+# Per-backend default models (agent.backend_models). ``agent.model`` remains THE
+# default for the kiro FAMILY (kiro-cli and KAS share its model ids), so nothing
+# about an existing kiro configuration changes; this map exists only for the
+# adapted harnesses, whose model namespaces do not overlap kiro's.
+#
+# Why a separate map rather than reinterpreting ``agent.model``: the three
+# vocabularies are disjoint (``claude-opus-4.8`` vs
+# ``global.anthropic.claude-opus-4-8[1m]`` vs whatever Codex serves), so one
+# field would mean switching backend either carries a meaningless id across the
+# boundary or silently destroys the previous backend's saved pick. Keyed by the
+# ACP backend id, which is why the kiro backend (spelled ``""``) is deliberately
+# not a key here — an empty JSON object key is legal but unreadable, and its
+# value already has a home.
+
+
+def _backend_model_vocabulary() -> tuple[tuple[str, ...], frozenset[str]]:
+    """``(adapted-harness keys, backends sharing kiro's model namespace)``.
+
+    Imported at CALL time, not module scope: ``kiro_crew.acp``'s package
+    ``__init__`` pulls in ``acp.client``, which reaches back into this module via
+    ``agent_scratch`` — so naming the backends up top would close an import
+    cycle. Deferring keeps the identities positive and centralized
+    (harness-parity H5) instead of re-spelling bare literals here.
+    """
+    from kiro_crew.acp.types import (  # circular: acp -> client -> agent_scratch -> config
+        ACP_BACKEND_CLAUDE,
+        ACP_BACKEND_CODEX,
+        ACP_BACKENDS_KIRO_MODEL_CATALOG,
+    )
+
+    return (ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX), ACP_BACKENDS_KIRO_MODEL_CATALOG
+
+
+def coerce_backend_models(raw: object) -> dict[str, str]:
+    """Normalize the per-backend default-model map from config / request bodies.
+
+    Only the adapted-harness backend ids survive, each through
+    :func:`normalize_agent_model` so ``"auto"`` and non-strings collapse to
+    ``""``. Empty values are dropped, so an absent key and an explicit ``"auto"``
+    behave identically: **inherit the model the backend itself served**. That is
+    the only entitlement-safe default for a harness whose catalog Kiro Crew
+    cannot enumerate — inventing an id would fail at the first prompt.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    keys, _kiro_family = _backend_model_vocabulary()
+    out: dict[str, str] = {}
+    for backend in keys:
+        val = normalize_agent_model(raw.get(backend))
+        if val:
+            out[backend] = val
+    return out
+
+
 def coerce_role_efforts(raw: object) -> dict[str, str]:
     """Normalize the per-role reasoning-effort map (agent.role_efforts).
 
@@ -1530,6 +1584,23 @@ class AgentConfig:
         default=DEFAULT_MODEL,
         metadata=_meta("Model", "LLM model identifier. 'auto' resolves from agent config."),
     )
+    backend_models: dict[str, str] = field(
+        default_factory=dict,
+        metadata=_meta(
+            "Per-backend default models",
+            "Default model for new sessions on an ADAPTED ACP harness. Keys are "
+            "ACP backend ids: 'claude' (Claude Code via claude-agent-acp) and "
+            "'codex' (Codex CLI via codex-acp). The kiro family (kiro-cli and "
+            "KAS) is deliberately absent — its default stays 'agent.model', so "
+            "an existing configuration is unchanged. Each harness keeps its own "
+            "entry because the model namespaces are disjoint, so switching "
+            "'agent.acp_backend' back and forth never overwrites or "
+            "reinterprets another backend's saved choice. Empty or 'auto' means "
+            "inherit whatever model the backend itself served — the only "
+            "entitlement-safe default for a harness whose catalog cannot be "
+            "enumerated ahead of a session.",
+        ),
+    )
     role_models: dict[str, str] = field(
         default_factory=dict,
         metadata=_meta(
@@ -2101,6 +2172,8 @@ class AgentConfig:
         # feeds coerced input.
         self.role_models = coerce_role_models(self.role_models)
         self.role_efforts = coerce_role_efforts(self.role_efforts)
+        # Same defensive coercion for the per-backend default models.
+        self.backend_models = coerce_backend_models(self.backend_models)
         # Same defensive coercion for the throttle-fallback model: normalize to
         # ""/"auto"/acp id, so consumers can trust the stored shape.
         self.fallback_model = coerce_fallback_model(self.fallback_model)
@@ -2116,6 +2189,25 @@ class AgentConfig:
         that write a kiro agent spec / cc_model store this verbatim.
         """
         return normalize_agent_model(self.role_models.get(role, "")) or DEFAULT_MODEL
+
+    def model_for_backend(self, backend: str) -> str:
+        """The default model for NEW sessions on *backend* — the ONE read point.
+
+        The kiro family (kiro-cli and KAS share one set of model ids) resolves to
+        ``agent.model``, unchanged and including its ``"auto"`` sentinel, so every
+        existing configuration behaves exactly as before. Every other harness
+        resolves to its own :attr:`backend_models` entry.
+
+        Returns ``""`` for an adapted harness with no saved pick, which means
+        **inherit the model the backend served at ``session/new``** — never a
+        borrowed id from another namespace, and never a guess. That is the
+        difference between a Codex session running whatever Codex chose and one
+        that dies on its first prompt with a kiro model id it was handed.
+        """
+        _keys, kiro_family = _backend_model_vocabulary()
+        if backend in kiro_family:
+            return self.model
+        return normalize_agent_model(self.backend_models.get(backend, ""))
 
     def resolve_effort(self, role: str) -> str:
         """Effective reasoning effort for a task ``role`` — INDEPENDENT of the chat
@@ -7342,6 +7434,7 @@ class KiroCrewConfig:
                 approval_mode=agent_data.get("approval_mode", "auto"),
                 streaming=agent_data.get("streaming", True),
                 model=agent_data.get("model", DEFAULT_MODEL),
+                backend_models=coerce_backend_models(agent_data.get("backend_models")),
                 role_models=coerce_role_models(agent_data.get("role_models")),
                 role_efforts=coerce_role_efforts(agent_data.get("role_efforts")),
                 fallback_model=coerce_fallback_model(agent_data.get("fallback_model", "auto")),
@@ -8423,6 +8516,47 @@ class KiroCrewConfig:
                 pass
         return DEFAULT_MODEL
 
+    def _collapsed_default_model(self) -> str:
+        """The configured default model for the SELECTED backend, collapsed.
+
+        Resolves in that backend's own namespace (``model_for_backend``), then —
+        only for the kiro family, and only when the value is still the ``"auto"``
+        sentinel — falls through to the kiro agent spec's own pin
+        (``_resolve_agent_model``). That fallthrough reads
+        ``~/.kiro/agents/*.json``, whose ``model`` field is a kiro id, so
+        extending it to an adapted harness would hand Claude or Codex an id from
+        kiro's vocabulary. An adapted harness with no saved pick resolves to
+        ``""`` instead: inherit whatever that backend served.
+        """
+        backend = self.agent.acp_backend
+        model = self.agent.model_for_backend(backend)
+        _keys, kiro_family = _backend_model_vocabulary()
+        if backend in kiro_family and model == DEFAULT_MODEL:
+            model = self._resolve_agent_model()
+        return model
+
+    def _translate_model_for_backend(self, model: str, backend: str) -> str:
+        """Translate a resolved model id into *backend*'s own wire spelling.
+
+        The kiro family goes through ``to_acp_id`` (canonical keys become kiro
+        ids, ``"auto"`` collapses to ``""``). A backend the registry covers under
+        another provider column is translated through that column instead. A
+        backend the registry does not cover at all passes through UNCHANGED —
+        the registry's documented identity-preserving contract, and the only
+        honest answer for ids Kiro Crew has never seen.
+        """
+        if not model:
+            return ""
+        _keys, kiro_family = _backend_model_vocabulary()
+        if backend in kiro_family:
+            return model_registry.to_acp_id(model)
+        from kiro_crew.acp.model_catalog import (  # circular: acp -> client -> config
+            registry_provider_for_backend,
+        )
+
+        provider = registry_provider_for_backend(backend)
+        return model_registry.to_provider_id(model, provider) if provider else model
+
     def acp_effective_model(
         self,
         agent: str | None,
@@ -8440,28 +8574,34 @@ class KiroCrewConfig:
         the session layer resolved) > a named agent's own kiro ``model`` pin
         (``kirocrew`` itself and the no-agent case use the global directly) >
         the collapsed global. ``global_model`` lets the factory pass its
-        build-time collapsed ``agent.model``; when omitted it is recomputed
-        the same way (``agent.model``, collapsed through
-        :meth:`_resolve_agent_model` when it is the ``auto`` sentinel).
+        build-time collapsed default; when omitted it is recomputed the same way
+        (:meth:`_collapsed_default_model`).
 
-        The result is translated through ``model_registry.to_acp_id`` exactly
-        as the factory does — canonical keys become kiro ids, and ``auto``
-        collapses to ``""`` (``to_acp_id``, NOT ``to_provider_id``: kiro serves
-        the registry aliases as distinct real models — see its docstring).
-        ``""`` means nothing is pinned anywhere: kiro-cli resolves the model
+        Every tier resolves in the SELECTED backend's namespace. Two consequences
+        worth stating, because both were silently wrong while one global
+        ``agent.model`` served every harness:
+
+        - the named-agent pin is consulted only for the kiro family. It comes
+          from ``~/.kiro/agents/*.json``, which is kiro's own agent store and
+          carries kiro model ids, so applying it on Claude or Codex would pin a
+          model those harnesses have never heard of.
+        - the translation is per-backend (:meth:`_translate_model_for_backend`),
+          not unconditionally ``to_acp_id``.
+
+        ``""`` means nothing is pinned anywhere: the backend resolves the model
         itself and the effort overlay cannot be keyed.
         """
         if global_model is None:
-            global_model = self.agent.model
-            if global_model == DEFAULT_MODEL:
-                global_model = self._resolve_agent_model()
+            global_model = self._collapsed_default_model()
+        backend = self.agent.acp_backend
+        _keys, kiro_family = _backend_model_vocabulary()
         if model_override:
             m: str = model_override
-        elif not agent or agent == "kirocrew":
+        elif not agent or agent == "kirocrew" or backend not in kiro_family:
             m = global_model
         else:
             m = self._resolve_named_agent_model(agent) or global_model
-        return model_registry.to_acp_id(m) if m else ""
+        return self._translate_model_for_backend(m, backend)
 
     @staticmethod
     def _resolve_named_agent_model(agent: str, agents_dir: Path | None = None) -> str:
@@ -8579,9 +8719,7 @@ class KiroCrewConfig:
             AcpProvider,  # circular: acp -> client -> session -> config.loader
         )
 
-        model = self.agent.model
-        if model == DEFAULT_MODEL:
-            model = self._resolve_agent_model()
+        model = self._collapsed_default_model()
 
         sandbox = self.agent.sandbox
         tool_search = self.agent.tool_search

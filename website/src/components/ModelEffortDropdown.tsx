@@ -16,6 +16,10 @@ interface Props {
   models: ModelItem[]
   activeModel: string
   onSelectModel: (name: string) => void
+  /** True when this backend cannot change a RUNNING session's model, so the
+   *  pick becomes the default for the next session. Forwarded to the list,
+   *  which states the lifetime rather than implying an immediate effect. */
+  appliesToNextSession?: boolean
   filter: string
   setFilter: (v: string) => void
   onClose: () => void
@@ -63,6 +67,7 @@ const SPRING = { type: 'spring' as const, stiffness: 420, damping: 38 }
  *  a back chevron returns. The popover height springs to the active page. */
 export default function ModelEffortDropdown({
   anchorRect, dropdownRef, inputRef, models, activeModel, onSelectModel,
+  appliesToNextSession = false,
   filter, setFilter, onClose, hasEffort, slot, currentEffort, onListKeyDown, onSetDefault,
   defaultEffort = '', onPinToAgent, agentName = '', pinModelName = '',
   pinModelUnavailable = false, pinnedToAgent = false,
@@ -105,7 +110,7 @@ export default function ModelEffortDropdown({
               />
             </div>
             <div role="listbox" aria-label={i18nT('components.modelEffortDropdown.model_list')} className="overflow-y-auto max-h-[280px]">
-              <ModelDropdownList models={models} activeModel={activeModel} onSelect={onSelectModel} />
+              <ModelDropdownList models={models} activeModel={activeModel} onSelect={onSelectModel} appliesToNextSession={appliesToNextSession} />
             </div>
             {hasEffort && slot && (
               <button

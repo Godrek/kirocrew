@@ -12,7 +12,7 @@ import re
 import tempfile
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,7 +21,14 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 from kiro_crew import model_registry
-from kiro_crew.acp.client import AcpModelUnavailable
+from kiro_crew.acp.client import AcpModelUnavailable, advertised_model_ids
+from kiro_crew.acp.model_catalog import (
+    PROVIDER_DEFAULT_MODELS,
+    SCOPE_LIVE_SESSION,
+    SCOPE_NEXT_SESSION,
+    model_allowed,
+)
+from kiro_crew.acp.types import ACP_BACKEND_KIRO, ACP_BACKEND_KIRO_LABEL
 from kiro_crew.agent_discovery import cached_project_agent_names, warm_project_agent_names
 from kiro_crew.config.loader import (
     KiroCrewConfig,
@@ -3933,41 +3940,123 @@ async def api_chat_slot_agent(request: web.Request) -> web.Response:
     return web.json_response(resp_body)
 
 
-def _model_rejected_reason(model_name: str, provider: str | None = None) -> str | None:
-    """Reason to reject ``model_name`` for the active provider, or None to allow.
+def _slot_backend(slot: "_ChatSlot") -> str:
+    """The ACP backend *slot* actually runs on.
 
-    The dashboard model dropdown falls back to canonical registry keys (e.g.
-    ``fable-5-1m``) when /api/models is unavailable (gateway restart / kiro-cli
-    cold-start timeout). Those keys are DISPLAY identifiers the ACP CLI rejects
-    as model ids (-32603 "model not available") — persisting one into
-    ``slot.model`` breaks the next turn. This guard is defense-in-depth behind
-    the frontend's auto-only fallback: a stale client, a direct API
-    call, or the openai-compat path can never persist a canonical key. ``auto``
-    and ``""`` (provider default) always pass; for the ``claude_code`` provider
-    canonical keys ARE the wire format, so they pass there too.
-
-    *provider* lets a caller that has already loaded the config supply it, so
-    this adds no read of its own: ``KiroCrewConfig.load()`` deep-copies the
-    validated dict even on a cache hit, and on a miss it reads and validates
-    files — work that must not land on the event loop under a held lock. Omit it
-    and the provider is resolved here, preserving the original behaviour.
+    ``slot.acp_backend`` stays None until a session binds one, so an UNBOUND slot
+    answers with the configured default (what its next spawn would pick) while a
+    BOUND one keeps the harness it started on. That asymmetry is the point:
+    changing the global default must not retroactively redefine which models a
+    live session may be given.
     """
-    if not model_name or model_name == "auto":
-        return None
-    if provider is None:
-        try:
-            provider = KiroCrewConfig.load().agent.provider
-        except Exception:  # pragma: no cover - config load is resilient
-            provider = ""
-    if provider == "claude_code":
-        return None
-    if model_registry.is_canonical_key(model_name):
-        return (
-            f"{model_name!r} is a display-only model identifier the "
-            f"{provider or 'active'} provider does not accept; "
-            f"select a listed model or 'auto'."
+    if slot.acp_backend is not None:
+        return slot.acp_backend
+    try:
+        return KiroCrewConfig.load().agent.acp_backend
+    except Exception:  # pragma: no cover - config load is resilient
+        return ACP_BACKEND_KIRO
+
+
+def clear_unrunnable_slot_models(state: "DashboardState", backend: str) -> list[str]:
+    """Drop model pins that *backend* cannot run, on slots it will govern.
+
+    A slot keeps ``slot.model`` across everything, including a change to the
+    configured backend. That pin is passed to the next spawn as the model
+    override, so an UNBOUND slot carrying a kiro id is a session that will be
+    created on the new harness and die on its first prompt with an unknown
+    model — the cross-vocabulary failure the per-backend namespaces exist to
+    remove, arriving by a different road.
+
+    Only unbound slots are touched. A slot with a live provider is still running
+    on the harness it started on and its pin is still correct there; taking it
+    away would change a running session to settle a question about future ones.
+    Those are handled when they unbind, where the same check runs against the
+    backend they will next be created on.
+
+    Clearing means "inherit what the backend serves" — never a substituted id,
+    which would silently run a model the user did not choose.
+    """
+    cleared: list[str] = []
+    for name, slot in list(state._slots.items()):
+        if slot.acp_backend is not None or not slot.model:
+            continue
+        if model_allowed(backend, slot.model):
+            continue
+        logger.info(
+            "Slot %s pinned %r, which backend %r does not serve — clearing the pin "
+            "so its next session inherits that backend's own model",
+            name,
+            slot.model,
+            backend or ACP_BACKEND_KIRO_LABEL,
         )
-    return None
+        slot.model = ""
+        cleared.append(name)
+    return cleared
+
+
+def _slot_advertised_ids(state: "DashboardState", name: str) -> list[str]:
+    """Model ids the LIVE session behind slot *name* advertised, or ``[]``.
+
+    The picker unions the static catalog with this, so a guard that reads only
+    the static half diverges from it in both directions: it refuses a model the
+    adapter advertised but the registry has not been taught, and it admits an id
+    for a catalog-less harness whose session never offered one. Empty for a slot
+    with no live provider, which is the same "unknown, so do not accuse" state
+    the entitlement predicate takes.
+    """
+    try:
+        provider = state.sessions.get_provider(_history_key_for(name))
+        if not isinstance(provider, AcpProvider):
+            return []
+        return advertised_model_ids(provider.available_models())
+    except Exception:  # pragma: no cover - a probe must never break a pick
+        logger.debug("Could not read advertised models for slot %s", name, exc_info=True)
+        return []
+
+
+def _model_rejected_reason(
+    model_name: str, backend: str | None = None, advertised: Sequence[str] | None = None
+) -> str | None:
+    """Reason to reject ``model_name`` on the ACP backend, or None to allow.
+
+    Tests the pick against that backend's ALLOWLIST — the same set
+    ``/api/models`` builds its rows from, so this can only ever refuse an id the
+    picker would not have offered. Keying on the backend rather than
+    ``agent.provider`` is what makes that true here: ``agent.provider`` is pinned
+    to ``acp`` for every harness, so a provider-shaped test cannot tell the
+    claude backend (whose wire format IS the canonical key ``opus-4.8-1m``) from
+    the kiro one (which rejects that same key with -32603), and answering for
+    both with one rule has to be wrong for one of them.
+
+    Still defense-in-depth rather than the only check: the dropdown falls back to
+    canonical keys when ``/api/models`` is unavailable (gateway restart, kiro-cli
+    cold-start timeout), and a display-only key persisted into ``slot.model``
+    breaks the next turn. A stale client, a direct API call, and the
+    openai-compat path all land here.
+
+    *backend* lets a caller that has already loaded the config supply it, so this
+    adds no read of its own: ``KiroCrewConfig.load()`` deep-copies the validated
+    dict even on a cache hit, and on a miss it reads and validates files — work
+    that must not land on the event loop under a held lock.
+    """
+    if model_name in PROVIDER_DEFAULT_MODELS:
+        return None
+    if backend is None:
+        try:
+            backend = KiroCrewConfig.load().agent.acp_backend
+        except Exception:  # pragma: no cover - config load is resilient
+            backend = ACP_BACKEND_KIRO
+    if model_allowed(backend, model_name, advertised=advertised):
+        return None
+    # Names the backend actually tested, not "the configured backend": callers
+    # pass the harness a SLOT is bound to, which deliberately differs from the
+    # configured default once that default changes under a live session. Saying
+    # "configured" there would point the user at a backend their session is not
+    # running on.
+    return (
+        f"{model_name!r} is not a model the {backend or ACP_BACKEND_KIRO_LABEL} "
+        f"backend accepts; select a listed model or 'auto'."
+    )
 
 
 def _wire_model_id(provider: AcpProvider, model_name: str) -> str:
@@ -4117,9 +4206,20 @@ def _broadcast_context_reset(state: "DashboardState", slot_key: str, provider: A
 async def api_chat_slot_model(request: web.Request) -> web.Response:
     """POST /api/chat/slots/{slot}/model — set model for a chat slot.
 
-    Prefers an in-place ``session/set_model`` on the running session and only
-    resets when that is impossible (no ACP provider, a turn in flight, an
-    unrepresentable target, or the live call failing).
+    Body: ``{"model": "<name>", "scope": "live_session" | "next_session"}``.
+
+    Default (``live_session``) prefers an in-place ``session/set_model`` on the
+    running session and only resets when that is impossible (no ACP provider, a
+    turn in flight, an unrepresentable target, or the live call failing).
+
+    ``next_session`` records the pick and deliberately leaves the running process
+    alone. It exists because the fallback above is not a detail the UI can hide:
+    a harness whose capabilities report ``switch_scope: next_session`` cannot
+    change model in place, so sending it down the default path means the user
+    reads "applies to your next session" and watches this one get destroyed. The
+    client sends the scope its own capability answer named, and a scope the slot
+    cannot honour is refused rather than quietly upgraded — a caller asking to
+    leave the session alone must never be the one that tears it down.
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["slot"]
@@ -4134,10 +4234,21 @@ async def api_chat_slot_model(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
     model_name = _normalize_model(body.get("model", ""))
-    reason = _model_rejected_reason(model_name)
+    # Validate against the backend THIS slot is bound to, not the configured
+    # default: a slot keeps the harness it was spawned on, so changing the global
+    # default must not start refusing (or start admitting) models for a session
+    # already running somewhere else.
+    reason = _model_rejected_reason(
+        model_name, _slot_backend(slot), _slot_advertised_ids(state, name)
+    )
     if reason:
         logger.warning("Slot %s model rejected: %s", name, reason)
         return web.json_response({"error": reason}, status=400)
+    scope = body.get("scope", SCOPE_LIVE_SESSION)
+    if scope not in (SCOPE_LIVE_SESSION, SCOPE_NEXT_SESSION):
+        return web.json_response(
+            {"error": "unknown model scope", "code": "model_scope_unknown"}, status=400
+        )
     # One pick transaction at a time per slot (verifier finding on 84fc7961):
     # two picks interleaving at the set_model await can roll back each other's
     # state no matter how careful the rollback condition is — with two failed
@@ -4165,6 +4276,16 @@ async def api_chat_slot_model(request: web.Request) -> web.Response:
             # still protects the choice from the restore probe.
             slot._model_pick_gen += 1
             return web.json_response({"ok": True, "model": model_name})
+        if scope == SCOPE_NEXT_SESSION:
+            # Record the pick and stop. The running session keeps the model it
+            # started on — including mid-turn, which is the case that makes this
+            # more than a preference: a default change must never kill an
+            # in-flight ACP process. The next spawn reads slot.model and starts
+            # there, which is exactly what the caller was told would happen.
+            slot.model = model_name
+            slot._model_pick_gen += 1
+            state.push_slots_update()
+            return web.json_response({"ok": True, "model": model_name, "scope": SCOPE_NEXT_SESSION})
         session_key = _history_key_for(name)
         provider = state.sessions.get_provider(session_key)
         prior_model = slot.model
@@ -4275,6 +4396,17 @@ async def api_chat_slots_model(request: web.Request) -> web.Response:
                 continue
             if skip_running and slot.running:
                 skipped_running.append(name)
+                continue
+            # Slots need not share a backend, and the up-front check above only
+            # cleared the configured default. A slot bound to a harness that does
+            # not serve this model is reported failed rather than switched: the
+            # alternative is writing an id its next turn rejects, which is the
+            # exact breakage the allowlist exists to stop — and doing it silently
+            # while telling the caller the switch succeeded.
+            if _model_rejected_reason(
+                model_name, _slot_backend(slot), _slot_advertised_ids(state, name)
+            ):
+                failed.append(name)
                 continue
             # Reset before flipping the model and isolate per-slot failures: if the
             # reset raises, leave slot.model untouched so the slot is never left on

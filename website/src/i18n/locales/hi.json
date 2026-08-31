@@ -6244,7 +6244,8 @@
       "auto_default": "डिफ़ॉल्ट",
       "credit_multiplier": "Auto की तुलना में {{value}} क्रेडिट लागत",
       "credit_multiplier_baseline": "{{value}}, आधार क्रेडिट लागत",
-      "no_matches": "कोई मेल नहीं"
+      "no_matches": "कोई मेल नहीं",
+      "applies_to_next_session": "यह बैकएंड चल रहे सत्र का मॉडल नहीं बदल सकता। चयन अगले सत्र पर लागू होगा।"
     },
     "modelEffortDropdown": {
       "default_for_agent": "<agent/> का डिफ़ॉल्ट मॉडल",
@@ -11619,9 +11620,11 @@
         "backend_kiro_cli": "Kiro CLI",
         "backend_claude_code": "Claude Code",
         "backend_codex": "Codex",
-        "backend_models_not_exposed": "यह बैकएंड यहाँ मॉडल चयन उपलब्ध नहीं कराता। Kiro मॉडल सेटिंग छिपी हैं क्योंकि वे इस बैकएंड को नियंत्रित नहीं करतीं।",
         "failed_to_save_agent_backend": "एजेंट बैकएंड सहेजा नहीं जा सका",
-        "backend_external": "बाहरी बैकएंड ({{backend}})"
+        "backend_external": "बाहरी बैकएंड ({{backend}})",
+        "backend_default_model_description": "नए {{backend}} सत्र किस मॉडल से शुरू होते हैं।",
+        "backend_default_model_hint": "डिफ़ॉल्ट {{backend}} द्वारा दिए गए मॉडल को अपनाता है। नए सत्रों पर लागू होता है।",
+        "backend_selects_its_own_model": "{{backend}} अपना मॉडल स्वयं चुनता है। {{productName}} के पास इस बैकएंड के लिए कोई मॉडल सूची नहीं है और वह किसी अन्य बैकएंड की सूची नहीं दिखाएगा।"
       },
       "computerUsePanel": {
         "accessibility": "सुगम्यता",

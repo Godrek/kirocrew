@@ -1796,28 +1796,28 @@ def _active_advertised_ids(request: web.Request) -> list[str] | None:
 
 
 def _validate_role_model(
-    value: str, request: web.Request, provider: str | None = None
+    value: str, request: web.Request, backend: str | None = None
 ) -> str | None:
     """Reject a per-role model pin the account cannot use; ``None`` = allow.
 
     ``""`` / ``"auto"`` always allow (they defer to the chat default). Otherwise
-    reuse the per-session provider guard (rejects display-only canonical keys for
-    the active provider), then — when a live advertised set is known — apply the
-    SAME entitlement predicate the session-init withhold uses
+    reuse the shared allowlist guard (rejects any id the ACP backend does not
+    accept), then — when a live advertised set is known — apply the SAME
+    entitlement predicate the session-init withhold uses
     (:func:`model_is_unusable`, #1596) so the picker and the wire cannot disagree.
     No advertised set => accept (entitlement unknowable; don't accuse on no
     evidence), matching that predicate's own conservative default.
 
-    *provider* is forwarded to :func:`_model_rejected_reason` so a caller holding
+    *backend* is forwarded to :func:`_model_rejected_reason` so a caller holding
     an already-loaded config does not pay a second synchronous config read; the
-    remaining work is in-memory. Omit it and the provider is resolved there.
+    remaining work is in-memory. Omit it and the backend is resolved there.
     """
     if not value or value == "auto":
         return None
     from kiro_crew.acp.client import model_is_unusable
     from kiro_crew.dashboard.chat_handlers import _model_rejected_reason
 
-    reason = _model_rejected_reason(value, provider=provider)
+    reason = _model_rejected_reason(value, backend)
     if reason:
         return reason
     advertised = _active_advertised_ids(request)
@@ -1860,6 +1860,30 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # by kiro itself rather than silently accepted here. "auto"/"" = defer to
     # the agent config / kiro's own default.
     "agent.model": {"type": "str", "max_len": 64, "pattern": r"^[A-Za-z0-9._\-\[\]]*$"},
+    # Default model for new sessions on an ADAPTED harness. One key per backend
+    # because the vocabularies are disjoint: a single field would make switching
+    # backend either carry a meaningless id across the boundary or destroy the
+    # other harness's saved pick. The kiro family has no key here — its default
+    # is agent.model above, which is what keeps every existing configuration
+    # working unchanged.
+    #
+    # Same grammar-only check as agent.model, and for the same reason: the real
+    # vocabulary is whatever that backend advertises, which no fixed list here
+    # could track. Deliberately NOT `_validate_role_model` — that validator
+    # checks entitlement against the ACTIVE provider, so it would reject a
+    # perfectly good Codex id while the gateway happens to be running Kiro,
+    # making a setting's validity depend on which harness is selected when you
+    # save it.
+    "agent.backend_models.claude": {
+        "type": "str",
+        "max_len": 64,
+        "pattern": r"^[A-Za-z0-9._\-\[\]]*$",
+    },
+    "agent.backend_models.codex": {
+        "type": "str",
+        "max_len": 64,
+        "pattern": r"^[A-Za-z0-9._\-\[\]]*$",
+    },
     # Per-task-class model overrides. Same grammar as agent.model (the real
     # vocabulary is whatever the backend advertises). "" / "auto" defers to the
     # chat default. `validate_fn` additionally rejects a well-formed id the
@@ -2411,14 +2435,46 @@ async def api_kirocrew_config_patch(request: web.Request) -> web.Response:
     # reload_provider_factory() must NOT be used here: it clears _sessions and
     # shuts every provider down, which is correct for a provider switch but
     # would kill in-flight turns just because a default changed.
-    if path_key in (
-        "agent.acp_backend",
-        "agent.model",
-        "agent.reasoning_effort",
-    ) or path_key.startswith("agent.role_efforts."):
+    if (
+        path_key
+        in (
+            "agent.acp_backend",
+            "agent.model",
+            "agent.reasoning_effort",
+        )
+        or path_key.startswith("agent.role_efforts.")
+        # A per-backend default is read at factory-build time exactly like
+        # agent.model, so it needs the same rebuild to reach new sessions
+        # without a gateway restart. refresh_defaults() drains the warm pool and
+        # leaves live sessions alone, which is the required behaviour here: a
+        # default-model change must never tear down an in-flight turn.
+        or path_key.startswith("agent.backend_models.")
+    ):
         state = request.app["state"]
         await state.sessions.refresh_defaults()
         logger.info("%s set to %r — session defaults refreshed", path_key, value)
+        if path_key == "agent.acp_backend":
+            # Rebuilding the factory is not enough on its own: an unbound slot
+            # still carries the PREVIOUS backend's model pin, which its next
+            # spawn would pass to the new harness as an override it cannot run.
+            #
+            # Best-effort, and deliberately so: the config write has ALREADY
+            # succeeded and been persisted by this point. Letting a housekeeping
+            # step decide the response would answer 500 for a change that landed,
+            # telling the user to retry something that already happened.
+            from kiro_crew.dashboard.chat_handlers import clear_unrunnable_slot_models
+
+            try:
+                if clear_unrunnable_slot_models(state, str(value)):
+                    state.push_slots_update()
+            except Exception:
+                logger.warning(
+                    "Could not re-check slot model pins after switching to backend %r; "
+                    "a slot pinned to the old backend's model may inherit on its next "
+                    "spawn instead",
+                    value,
+                    exc_info=True,
+                )
 
     # The background role model is baked into the lite / heartbeat kiro specs at
     # agent-build time, so a change must rewrite them to take effect without a

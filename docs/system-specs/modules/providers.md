@@ -50,7 +50,21 @@ class LLMProvider(ABC):
     async def cancel(*, wait_ack_timeout: float = 0.0) -> CancelOutcome
     def is_alive() -> bool
     def touch_activity() -> None
+    def available_models() -> list[dict[str, str]]
+    def get_valid_effort_levels() -> list[str]
+    def supports_model_switch() -> bool          # default False
+    @property
+    def acp_backend() -> str | None              # default None
 ```
+
+`acp_backend` defaults to **`None`, not `""`** — `""` IS the kiro backend, so
+defaulting to it would let a provider that never stated an identity be counted as
+kiro, and every model surface filtering on backend would then serve kiro's
+advertised list to whatever is actually running (harness-parity `H5`). Callers
+scoping providers by backend skip `None` rather than matching it.
+`supports_model_switch()` defaults to `False` for the same reason capabilities
+are opt-in everywhere else: switching a running session's model is a claim a
+harness makes, never one it inherits.
 
 ### LLMEvent (`providers/base.py`)
 
@@ -114,13 +128,30 @@ glue or a provider selector (see the repo-root `CLAUDE.md`).
 {
   "agent": {
     "provider": "acp",
-    "model": "auto"
+    "model": "auto",
+    "acp_backend": "",
+    "backend_models": { "claude": "", "codex": "" }
   }
 }
 ```
 
 - `agent.provider` is fixed to `"acp"` (enum `["acp"]`); there is no provider to choose.
 - `create_provider_factory()` returns a `Callable` that creates the kiro-cli `AcpProvider`.
+- **`agent.model` is the kiro FAMILY's default** (kiro-cli and KAS share one set of
+  model ids) and is unchanged. `agent.backend_models.<backend>` holds the default
+  for an ADAPTED harness. One read point: `AgentConfig.model_for_backend(backend)`.
+
+The namespaces are separate because the vocabularies are disjoint
+(`claude-opus-4.8` vs `global.anthropic.claude-opus-4-8[1m]` vs whatever Codex
+serves). A single field would make switching `acp_backend` either carry a
+meaningless id across the boundary or silently destroy the previous harness's
+saved pick; with one map per backend, switching away and back restores the
+earlier choice. An adapted harness with no saved pick resolves to `""` —
+**inherit the model that backend served at `session/new`** — never a borrowed id
+and never a guess, since an invented id fails at the first prompt. For the same
+reason `_collapsed_default_model` restricts the `~/.kiro/agents/*.json`
+fallthrough (and `acp_effective_model` the per-agent pin) to the kiro family:
+that store holds kiro model ids.
 
 An agent spec's model is consumed by kiro-cli before Kiro Crew reaches
 `session/new`, so the live-session entitlement guard cannot diagnose a wrong

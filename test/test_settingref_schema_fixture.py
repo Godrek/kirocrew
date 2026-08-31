@@ -72,6 +72,27 @@ def registry_index() -> dict[str, object]:
     return {entry.path: entry for entry in SCHEMA_REGISTRY}
 
 
+def _declared(path: str, registry_index: dict[str, object]) -> bool:
+    """Whether the backend schema declares *path*, directly or by wildcard.
+
+    A dict-valued config node is flattened as a parent plus a ``*`` leaf — e.g.
+    ``agent.backend_models`` and ``agent.backend_models.*`` — because the keys
+    are DATA (backend ids) rather than schema. A control that deep-links to one
+    concrete key therefore has no exact entry to match, and only the wildcard can
+    answer for it.
+
+    This still catches what the guard is for. A renamed or mistyped PARENT
+    (``agent.backend_modles.claude``) matches no wildcard and fails; what it no
+    longer flags is a leaf, which the schema never claimed to enumerate. Leaf
+    validity is enforced where the write happens, by the ``_EDITABLE_CONFIG``
+    allowlist.
+    """
+    if path in registry_index:
+        return True
+    parent, _, _leaf = path.rpartition(".")
+    return bool(parent) and f"{parent}.*" in registry_index
+
+
 @pytest.fixture()
 def generated_config_keys() -> list[str]:
     """Extract all configKey values from settingsRegistry.gen.ts."""
@@ -119,7 +140,7 @@ class TestSettingsRegistryGenConfigKeyDrift:
     def test_all_config_keys_exist_in_schema_registry(
         self, generated_config_keys, registry_index
     ):
-        missing = [k for k in generated_config_keys if k not in registry_index]
+        missing = [k for k in generated_config_keys if not _declared(k, registry_index)]
         assert not missing, (
             f"settingsRegistry.gen.ts configKey(s) missing from backend "
             f"SCHEMA_REGISTRY — typo or backend rename? Missing: {missing}"

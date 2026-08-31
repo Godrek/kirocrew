@@ -21,6 +21,7 @@ import { useAgents } from '../hooks/useAgents'
 import { useFilteredDropdown } from '../hooks/useFilteredDropdown'
 import { useConnectionsUiEnabled } from '../hooks/useConnectionsUi'
 import { useAvailableModels } from '../hooks/useAvailableModels'
+import { useModelCapabilities } from '../hooks/useModelCapabilities'
 import { usePlanActionMutation, isPlanAction } from '../hooks/usePlanActionMutation'
 import { useListboxKeyboard } from '../hooks/useListboxKeyboard'
 import { useAppSelector, useAppDispatch, store } from '../store'
@@ -203,20 +204,30 @@ export default function ChatPane({
       .catch(() => setDefaultAgentFailed(true))
   }, [dispatch])
   const agentDD = useFilteredDropdown(installedAgents)
-  const availableModels = useAvailableModels()
   const { data: acpBackend = '' } = useQuery<{ agent?: { acp_backend?: string } }, Error, string>({
     queryKey: ['kirocrewConfig'],
     queryFn: () => api.kirocrewConfig(),
     select: config => config.agent?.acp_backend ?? '',
   })
-  // Split panes can show sessions created under different defaults.
-  const usesKiroModelPicker = (paneSlot?.acp_backend ?? acpBackend) === ''
+  // The backend THIS pane's session is bound to. Split panes routinely show
+  // sessions created under different defaults, so the configured value is a
+  // fallback for a pane whose slot has not started — never an override.
+  const paneBackend = paneSlot?.acp_backend ?? acpBackend
+  // Capability, not identity: what this backend can do is answered by the
+  // server, so a harness that supports a picker gets one without an edit here.
+  const modelCaps = useModelCapabilities({ slot: slotKey, coldStartBackend: paneBackend })
+  const availableModels = useAvailableModels({
+    backend: paneBackend,
+    // Do not fetch a list for a backend that has none to give — the response
+    // would be an empty array, which the adapter reads as "degraded" and polls.
+    enabled: modelCaps.selectable,
+  })
   const modelDD = useFilteredDropdown(availableModels)
   // See ChatPage: display what will actually run, not a pin the account lost
   // access to. The degraded flag gates it — a cached list served while
   // /api/models fails is stale and cannot disprove entitlement — and is
   // subscribed to, since it can flip while the served list stays identical.
-  const _modelsDegraded = useModelsDegraded(provider.id)
+  const _modelsDegraded = useModelsDegraded(provider.id, paneBackend)
   const shownModel = displayModel(paneSlot?.model || '', availableModels, _modelsDegraded)
 
   // One-time hydrate of this slot's message history via React Query + the api
@@ -293,7 +304,11 @@ export default function ChatPane({
       // not depend on the coalesced slots rebroadcast to see its own pick.
       await performSlotSwitch('model', slotKey, name,
         async () => {
-          const r = await api.chatSlotModel(slotKey, name)
+          // Scope comes from this pane's own capability answer — see ChatPage:
+          // without it a `next_session` pick takes the live-switch path, whose
+          // fallback destroys the very session the footer promised to leave
+          // running.
+          const r = await api.chatSlotModel(slotKey, name, modelCaps.switch_scope)
           return r?.model ?? name
         },
         (value) => dispatch(updateSlot({ key: slotKey, model: value })))
@@ -304,7 +319,7 @@ export default function ChatPane({
       // eslint-disable-next-line no-console
       console.error('[ChatPane] switchModel failed', e)
     }
-  }, [dispatch, slotKey])
+  }, [dispatch, slotKey, modelCaps.switch_scope])
 
   // Roving-focus keyboard nav for the pickers (mirrors ChatPage / StyledSelect):
   // ArrowUp/Down across options, Enter/Space select, Escape/Tab close + return
@@ -766,7 +781,7 @@ export default function ChatPane({
           contextUsedTokens={contextTokens?.used}
           contextWindowTokens={contextTokens?.window || provider.getContextWindow(shownModel)}
           onAgentClick={provider.capabilities.agentTemplates ? (rect) => { setAgentBtnRect(rect); agentDD.setOpen(!agentDD.open) } : undefined}
-          onModelClick={usesKiroModelPicker ? (rect) => { setModelBtnRect(rect); modelDD.setOpen(!modelDD.open) } : undefined}
+          onModelClick={modelCaps.selectable ? (rect) => { setModelBtnRect(rect); modelDD.setOpen(!modelDD.open) } : undefined}
           approvalMode={displayMode}
           followUpOptions={followUpOptions}
           followUpPicked={followUpPicked}
@@ -886,7 +901,7 @@ export default function ChatPane({
         )}
 
         {/* Model picker portal — anchored to the input-bar model button. */}
-        {usesKiroModelPicker && modelDD.open && modelBtnRect && createPortal(
+        {modelCaps.selectable && modelDD.open && modelBtnRect && createPortal(
           /* The labeled dialog owns roving-focus key handling for its descendants. */
           // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
           <div
@@ -914,7 +929,7 @@ export default function ChatPane({
               />
             </div>
             <div role="listbox" aria-label={i18nT('components.chatPane.model_list')} className="overflow-y-auto max-h-[280px]">
-              <ModelDropdownList models={modelDD.filtered} activeModel={shownModel} onSelect={(name) => { switchModel(name); modelDD.setOpen(false) }} />
+              <ModelDropdownList models={modelDD.filtered} activeModel={shownModel} onSelect={(name) => { switchModel(name); modelDD.setOpen(false) }} appliesToNextSession={modelCaps.switch_scope === 'next_session'} />
             </div>
           </div>,
           document.body,

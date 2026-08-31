@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from kiro_crew.acp.session_handle import WatchdogSettings
+from kiro_crew.acp.types import ACP_BACKEND_KIRO
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +44,12 @@ def _make_cfg(
     cfg.session.timeout_secs = 3600
     cfg.agent.default_agent = ""
     cfg.agent.model = "auto"  # match real KiroCrewConfig default
+    # Also the real default, and load-bearing: model resolution asks which
+    # harness the session runs on before deciding whether the kiro-namespaced
+    # tiers apply. Left unpinned, attribute access hands back a truthy MagicMock
+    # that is in no membership set, so the resolver reads it as an adapted
+    # harness and returns another MagicMock as the model.
+    cfg.agent.acp_backend = ACP_BACKEND_KIRO
     return cfg
 
 

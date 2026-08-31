@@ -16464,6 +16464,57 @@ class TestSlotModelGuard:
         assert state._slots["a"].model == "claude-opus-4.8"
         state.sessions.reset.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_next_session_scope_records_the_pick_without_a_reset(self, tmp_path):
+        """A pick the UI said applies NEXT time must not destroy this session.
+
+        The "do not fake it" requirement. On a harness that cannot switch in
+        place, the live path's fallback is a full session teardown — so a
+        dropdown footer reading "applies to your next session" was describing the
+        one action that restarts the user's chat. The scope is what makes the two
+        agree: the pick is recorded and the running process is left alone.
+        """
+        state = _make_state(tmp_path)
+        state.sessions.reset = AsyncMock()
+        state.get_or_create_slot("a", model="claude-fable-5")
+        state.push_slots_update = MagicMock()
+
+        async with TestClient(TestServer(self._app(state))) as client:
+            resp = await client.post(
+                "/api/chat/slots/a/model",
+                json={"model": "claude-opus-4.8", "scope": "next_session"},
+            )
+            data = await resp.json()
+
+        assert resp.status == 200
+        assert data["scope"] == "next_session"
+        # Recorded, so the next spawn starts there …
+        assert state._slots["a"].model == "claude-opus-4.8"
+        # … and the live session survives.
+        state.sessions.reset.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_scope_is_refused_rather_than_downgraded(self, tmp_path):
+        # Falling back to the live path on an unrecognised scope would make a
+        # typo the most destructive possible input: a caller asking to leave the
+        # session alone must never be the one that tears it down.
+        state = _make_state(tmp_path)
+        state.sessions.reset = AsyncMock()
+        state.get_or_create_slot("a", model="claude-fable-5")
+        state.push_slots_update = MagicMock()
+
+        async with TestClient(TestServer(self._app(state))) as client:
+            resp = await client.post(
+                "/api/chat/slots/a/model",
+                json={"model": "claude-opus-4.8", "scope": "nonsense"},
+            )
+            data = await resp.json()
+
+        assert resp.status == 400
+        assert data["code"] == "model_scope_unknown"
+        assert state._slots["a"].model == "claude-fable-5"
+        state.sessions.reset.assert_not_awaited()
+
 
 class TestSlotModelLiveSwitch:
     """POST /api/chat/slots/{slot}/model — prefer an in-place session/set_model

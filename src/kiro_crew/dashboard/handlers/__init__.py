@@ -83,6 +83,7 @@ from kiro_crew.dashboard.handlers.agents import (  # noqa: E402, F401
     api_kirocrew_agents,
     api_kirocrew_agents_create,
     api_kirocrew_agents_sync,
+    api_model_capabilities,
     api_models,
     api_slash_commands,
 )

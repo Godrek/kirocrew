@@ -97,8 +97,11 @@ if TYPE_CHECKING:
 
 from kiro_crew import model_registry, platform_compat, shutdown_event
 from kiro_crew.acp.client import advertised_model_ids, model_is_unusable
+from kiro_crew.acp.model_catalog import model_allowed
 from kiro_crew.acp.types import (
     ACP_BACKEND_CLAUDE,
+    ACP_BACKEND_KIRO,
+    ACP_BACKENDS_KIRO_MODEL_CATALOG,
     PROVIDER_LABEL_CLAUDE,
     PROVIDER_LABEL_DEFAULT,
 )
@@ -537,6 +540,41 @@ def _model_fallback(per_agent_model: str, global_default: str) -> "str | None":
     return global_default if global_default and global_default not in _SENTINEL_MODELS else None
 
 
+def _kiro_model_family() -> "frozenset[str]":
+    """Backends sharing kiro-cli's model namespace.
+
+    Named so the tiers that read kiro-owned config say WHY they are gated rather
+    than testing a backend id (harness-parity H6).
+    """
+    return ACP_BACKENDS_KIRO_MODEL_CATALOG
+
+
+def _model_for_backend_or_none(cfg: "KiroCrewConfig", model: str) -> "str | None":
+    """*model* if the configured backend can run it, else ``None`` (inherit).
+
+    A crew pin is typed by a user who may have named a model from a different
+    harness's vocabulary — or have configured the pin long before switching
+    backends. Passing it through unchecked starts a session whose very first
+    prompt fails on an unknown model id; ``None`` starts one on whatever the
+    backend itself serves. Neither silently substitutes a DIFFERENT model, which
+    is the outcome an explicit user pick must never get.
+    """
+    backend = cfg.agent.acp_backend
+    if backend in _kiro_model_family():
+        # Unchanged kiro behaviour: kiro's own ids and the registry's canonical
+        # keys both reach it through ``to_acp_id``, so nothing is filtered here.
+        return model
+    if model_allowed(backend, model):
+        return model
+    logger.info(
+        "Crew model pin %r is not in backend %r's vocabulary — inheriting the "
+        "model that backend serves instead",
+        model,
+        backend or ACP_BACKEND_KIRO,
+    )
+    return None
+
+
 def _session_model(cfg: "KiroCrewConfig", agent: str | None) -> "str | None":
     """Resolve the model for a new session on *agent*, for EVERY surface.
 
@@ -553,15 +591,30 @@ def _session_model(cfg: "KiroCrewConfig", agent: str | None) -> "str | None":
     is returned VERBATIM because the factory has no way to discover it: it never
     sees the crew name.
 
+    **Every tier resolved here is kiro-namespaced.** ``agent.model`` is the kiro
+    family's global, and a named agent's pin is read from kiro-cli's own
+    ``~/.kiro/agents/*.json``. Handing either to an adapted harness produces the
+    one failure the backend-aware model work exists to remove: a session started
+    with a ``model_override`` its wire rejects on the first prompt. So an adapted
+    backend resolves its own default instead, and any id it cannot run is dropped
+    to ``None`` — inherit what the backend served — rather than translated, since
+    there is no correspondence between the namespaces to translate through.
+
     Blocking I/O (globs + reads ``~/.kiro/agents/*.json``): call in an executor.
     """
     crew = cfg.agents.get(agent) if agent else None
     if crew is not None:
         crew_model = normalize_agent_model(crew.model)
         if crew_model:
-            return crew_model
+            return _model_for_backend_or_none(cfg, crew_model)
         # The crew defers, so continue down the chain on the template it binds.
         agent = crew.kiro_agent or agent
+
+    backend = cfg.agent.acp_backend
+    if backend not in _kiro_model_family():
+        # The kiro-namespaced tiers below do not apply. This harness's own
+        # configured default is the whole answer, and "" means inherit.
+        return cfg.agent.model_for_backend(backend) or None
 
     per_agent_model = ""
     if agent and agent != "kirocrew":

@@ -8,9 +8,11 @@ import {
 
 describe('useModelsDegraded', () => {
   beforeEach(() => {
-    // The store is module-level; reset both providers used below.
-    markModelsDegraded('acp', false)
-    markModelsDegraded('other', false)
+    // The store is module-level; reset every provider+backend pair used below.
+    markModelsDegraded('acp', undefined, false)
+    markModelsDegraded('other', undefined, false)
+    markModelsDegraded('acp', '', false)
+    markModelsDegraded('acp', 'codex', false)
   })
 
   it('re-renders when the flag flips with no change to the model list', () => {
@@ -22,12 +24,12 @@ describe('useModelsDegraded', () => {
     expect(result.current).toBe(false)
 
     act(() => {
-      markModelsDegraded('acp', true)
+      markModelsDegraded('acp', undefined, true)
     })
     expect(result.current).toBe(true)
 
     act(() => {
-      markModelsDegraded('acp', false)
+      markModelsDegraded('acp', undefined, false)
     })
     expect(result.current).toBe(false)
   })
@@ -35,7 +37,7 @@ describe('useModelsDegraded', () => {
   it('is provider-scoped', () => {
     const { result } = renderHook(() => useModelsDegraded('acp'))
     act(() => {
-      markModelsDegraded('other', true)
+      markModelsDegraded('other', undefined, true)
     })
     expect(result.current).toBe(false)
   })
@@ -45,12 +47,47 @@ describe('useModelsDegraded', () => {
     expect(result.current).toBe(false)
   })
 
+  it('is backend-scoped within one provider', () => {
+    // Every backend runs through the same `acp` provider, so a flag keyed on the
+    // provider alone is one flag for all of them. A Kiro success would then stop
+    // the self-heal poll for a Codex picker still serving a stale cached list,
+    // and a Codex failure would keep a healthy Kiro picker polling forever.
+    const kiro = renderHook(() => useModelsDegraded('acp', ''))
+    const codex = renderHook(() => useModelsDegraded('acp', 'codex'))
+
+    act(() => {
+      markModelsDegraded('acp', 'codex', true)
+    })
+    expect(codex.result.current).toBe(true)
+    expect(kiro.result.current).toBe(false)
+
+    act(() => {
+      markModelsDegraded('acp', '', true)
+      markModelsDegraded('acp', 'codex', false)
+    })
+    expect(kiro.result.current).toBe(true)
+    expect(codex.result.current).toBe(false)
+  })
+
+  it('separates an omitted backend from an explicit kiro backend', () => {
+    // `undefined` asks about the CONFIGURED backend and `''` asks about kiro;
+    // they are distinct query keys, so they must be distinct health entries.
+    const configured = renderHook(() => useModelsDegraded('acp'))
+    const explicitKiro = renderHook(() => useModelsDegraded('acp', ''))
+
+    act(() => {
+      markModelsDegraded('acp', '', true)
+    })
+    expect(explicitKiro.result.current).toBe(true)
+    expect(configured.result.current).toBe(false)
+  })
+
   it('agrees with the non-reactive getter', () => {
     // The refetch-cadence path still reads the getter, so the two must not
     // diverge.
     const { result } = renderHook(() => useModelsDegraded('acp'))
     act(() => {
-      markModelsDegraded('acp', true)
+      markModelsDegraded('acp', undefined, true)
     })
     expect(result.current).toBe(modelsDegraded('acp'))
   })

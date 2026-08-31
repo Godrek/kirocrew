@@ -159,7 +159,10 @@ export interface ProviderAdapter {
   uninstallPlugin(pkg: string, type: 'agent' | 'skill' | 'mcp'): Promise<{ ok: boolean; error?: string }>
   updatePlugins(type: 'agent' | 'skill' | 'mcp'): Promise<{ ok: boolean; output?: string; error?: string }>
 
-  fetchAvailableModels(): Promise<ModelInfo[]>
+  /** Models for ONE ACP backend ('' = kiro-cli; omitted = the configured one).
+   *  Each backend has its own vocabulary and they do not overlap, so a picker
+   *  must always name the backend it is asking about. */
+  fetchAvailableModels(backend?: string): Promise<ModelInfo[]>
   getContextWindow(model: string): number
   getDefaultModel(): string
   getPermissionModes(): PermissionMode[]

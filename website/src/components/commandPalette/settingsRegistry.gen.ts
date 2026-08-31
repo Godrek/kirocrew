@@ -884,6 +884,24 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "occurrence": 1
   },
   {
+    "id": "chat.default-model-2",
+    "label": "Default Model",
+    "labelKey": "pages.settings.chatPanel.default_model",
+    "tab": "chat",
+    "type": "select",
+    "occurrence": 2,
+    "configKey": "agent.backend_models.claude"
+  },
+  {
+    "id": "chat.default-model-3",
+    "label": "Default Model",
+    "labelKey": "pages.settings.chatPanel.default_model",
+    "tab": "chat",
+    "type": "select",
+    "occurrence": 3,
+    "configKey": "agent.backend_models.codex"
+  },
+  {
     "id": "chat.default-reasoning-effort",
     "label": "Default Reasoning Effort",
     "labelKey": "pages.settings.chatPanel.default_reasoning_effort",
@@ -891,6 +909,16 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "tab": "chat",
     "type": "select",
     "occurrence": 1
+  },
+  {
+    "id": "chat.default-reasoning-effort-2",
+    "label": "Default Reasoning Effort",
+    "labelKey": "pages.settings.chatPanel.default_reasoning_effort",
+    "description": "How long models think before answering by default. Higher is slower and costs more. Only available on reasoning-capable models (Opus, Sonnet, Fable, GPT-5.x).",
+    "tab": "chat",
+    "type": "select",
+    "occurrence": 2,
+    "configKey": "agent.reasoning_effort"
   },
   {
     "id": "chat.default-to-autopilot-mode",

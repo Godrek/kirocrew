@@ -6244,7 +6244,8 @@
       "auto_default": "ডিফল্ট",
       "credit_multiplier": "Auto-এর তুলনায় {{value}} ক্রেডিট খরচ",
       "credit_multiplier_baseline": "{{value}}, ভিত্তি ক্রেডিট খরচ",
-      "no_matches": "কোনো মিল নেই"
+      "no_matches": "কোনো মিল নেই",
+      "applies_to_next_session": "এই ব্যাকএন্ড চলমান সেশনের মডেল পরিবর্তন করতে পারে না। আপনার নির্বাচন পরবর্তী সেশনে প্রযোজ্য হবে।"
     },
     "modelEffortDropdown": {
       "default_for_agent": "<agent/>-এর ডিফল্ট মডেল",
@@ -11619,9 +11620,11 @@
         "backend_kiro_cli": "Kiro CLI",
         "backend_claude_code": "Claude Code",
         "backend_codex": "Codex",
-        "backend_models_not_exposed": "এই ব্যাকএন্ড এখানে মডেল নির্বাচন প্রদান করে না। Kiro মডেল সেটিংস লুকানো থাকে, কারণ সেগুলো এই ব্যাকএন্ড নিয়ন্ত্রণ করে না।",
         "failed_to_save_agent_backend": "এজেন্ট ব্যাকএন্ড সংরক্ষণ করা যায়নি",
-        "backend_external": "বাহ্যিক ব্যাকএন্ড ({{backend}})"
+        "backend_external": "বাহ্যিক ব্যাকএন্ড ({{backend}})",
+        "backend_default_model_description": "নতুন {{backend}} সেশন কোন মডেল দিয়ে শুরু হয়।",
+        "backend_default_model_hint": "ডিফল্ট {{backend}}-এর দেওয়া মডেল উত্তরাধিকারসূত্রে নেয়। নতুন সেশনে প্রযোজ্য।",
+        "backend_selects_its_own_model": "{{backend}} নিজেই তার মডেল বেছে নেয়। {{productName}}-এর কাছে এই ব্যাকএন্ডের জন্য কোনও মডেল তালিকা নেই এবং অন্য ব্যাকএন্ডের তালিকাও দেখাবে না।"
       },
       "computerUsePanel": {
         "accessibility": "সহজগম্যতা",
