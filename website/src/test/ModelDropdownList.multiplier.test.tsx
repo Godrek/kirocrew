@@ -230,10 +230,14 @@ describe('withAutoFirst — Auto keeps the multiplier it was served', () => {
     expect(auto.contextWindow).toBe(1_000_000)
   })
 
-  it('leaves Auto unpriced when the backend sent no auto row', () => {
-    // Cold start / degraded list: nothing told us Auto's rate, so nothing is shown.
-    const [auto] = withAutoFirst([{ name: 'claude-opus-5', description: '…', rateMultiplier: 2.2 }])
-    expect(auto.rateMultiplier).toBeUndefined()
+  it('invents no Auto row when the backend sent none', () => {
+    // Whether a harness HAS an id meaning "let the server choose" is the
+    // backend's answer, given by including or omitting the row. Synthesizing one
+    // puts back the option the server deliberately removed — and on a backend
+    // with no such id, picking it cannot be a config-option switch and falls
+    // back to destroying the session.
+    const out = withAutoFirst([{ name: 'claude-opus-5', description: '…', rateMultiplier: 2.2 }])
+    expect(out.map(m => m.name)).toEqual(['claude-opus-5'])
   })
 
   it('puts auto first exactly once and keeps the backend order after it', () => {
@@ -259,6 +263,18 @@ describe('withAutoFirst — Auto keeps the multiplier it was served', () => {
 
   it('drops nameless rows rather than rendering an empty option', () => {
     const out = withAutoFirst([{ name: '', description: 'junk' }, { name: 'glm-5', description: '' }])
+    expect(out.map(m => m.name)).toEqual(['glm-5'])
+  })
+
+  it('still hoists a served Auto row to the front', () => {
+    // The other half: a backend that DOES serve `auto` keeps it, and keeps it
+    // first, so the registry's default-flagged flagship does not read as the
+    // default.
+    const out = withAutoFirst([
+      { name: 'glm-5', description: '' },
+      { name: 'auto', description: '', rateMultiplier: 1 },
+    ])
     expect(out.map(m => m.name)).toEqual(['auto', 'glm-5'])
+    expect(out[0].rateMultiplier).toBe(1)
   })
 })

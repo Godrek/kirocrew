@@ -104,8 +104,16 @@ const TIER_BORDER: Record<ReturnType<typeof costTier>, string> = {
 }
 
 /** Shared model list used in dropdown portals across AgentsPage and ChatPage */
-export default function ModelDropdownList({ models, activeModel, onSelect }: {
+export default function ModelDropdownList({ models, activeModel, onSelect, appliesToNextSession }: {
   models: ModelItem[]; activeModel: string; onSelect: (name: string) => void
+  /** True when this backend cannot change a RUNNING session's model, so the
+   *  pick becomes the default for the next one instead.
+   *
+   *  The alternative — accepting the click and letting the running session keep
+   *  its old model — is the "do not fake it" failure: the picker would show a
+   *  check next to a model that is not serving the turn. Stating the lifetime is
+   *  what makes the same click honest. */
+  appliesToNextSession?: boolean
 }) {
   const activeRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
@@ -162,6 +170,11 @@ export default function ModelDropdownList({ models, activeModel, onSelect }: {
         )
       })}
       {models.length === 0 && <div className="px-3 py-2 text-[13px] text-muted italic">{i18nT('components.modelDropdownList.no_matches')}</div>}
+      {appliesToNextSession && (
+        <div className="px-2.5 py-2 text-[12px] text-muted leading-tight border-t border-border">
+          {i18nT('components.modelDropdownList.applies_to_next_session')}
+        </div>
+      )}
     </div>
   )
 }

@@ -94,6 +94,7 @@ import WelcomeView from '../components/WelcomeView'
 import { usePanelTabs, openPanelView, clearInlineDraft, getInlineDraft, claimAppAutoOpen, useAnyLiveAppTab } from '../hooks/usePanelTabs'
 import { useFilteredDropdown } from '../hooks/useFilteredDropdown'
 import { useAvailableModels } from '../hooks/useAvailableModels'
+import { useModelCapabilities } from '../hooks/useModelCapabilities'
 import { useListboxKeyboard } from '../hooks/useListboxKeyboard'
 import { useAgents } from '../hooks/useAgents'
 import AgentDropdownList, { DefaultAgentRow, ManageAgentsFooter } from '../components/AgentDropdownList'
@@ -1125,11 +1126,31 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   }, [dispatch])
   const { open: agentDropdown, setOpen: setAgentDropdown, filter: agentFilter, setFilter: setAgentFilter, dropdownRef: agentDropdownRef, inputRef: agentInputRef, filtered: filteredAgentsByName } = useFilteredDropdown(installedAgents)
   const filteredAgents = filteredAgentsByName
-  const availableModels = useAvailableModels()
   const { data: acpBackend = '' } = useQuery<{ agent?: { acp_backend?: string } }, Error, string>({
     queryKey: ['kirocrewConfig'],
     queryFn: () => api.kirocrewConfig(),
     select: config => config.agent?.acp_backend ?? '',
+  })
+  // The backend the ACTIVE slot is bound to. The configured value applies only
+  // to a slot that has not started yet, so changing the default for new sessions
+  // can never re-point a live session's picker at another harness's models.
+  const activeSlotBackend =
+    slots.find(s => s.key === activeSlot)?.acp_backend ?? acpBackend
+  // What this backend can do — asked of the server, never inferred from which
+  // backend it is. `slot` lets the server answer from the LIVE session, which is
+  // the only place a per-adapter capability (does this build expose the model
+  // config option?) can be known.
+  const modelCaps = useModelCapabilities({
+    slot: activeSlot ?? undefined,
+    // The slot's OWN backend, so a live Codex session never assumes kiro's
+    // controls for a frame while the real answer is in flight.
+    coldStartBackend: activeSlotBackend,
+  })
+  const availableModels = useAvailableModels({
+    backend: activeSlotBackend,
+    // A backend with no vocabulary answers `[]`, which the adapter reads as a
+    // degraded response and polls for. Do not ask it.
+    enabled: modelCaps.selectable,
   })
   const { open: modelDropdown, setOpen: setModelDropdown, filter: modelFilter, setFilter: setModelFilter, dropdownRef: modelDropdownRef, inputRef: modelInputRef, filtered: filteredModels } = useFilteredDropdown(availableModels)
   // Roving-focus keyboard nav for the agent + model dropdowns (shared with StyledSelect/AgentSelector).
@@ -4642,7 +4663,12 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         async () => {
           // The response's `model` is the stored value (deprecated ids are
           // remapped server-side), so prefer it over the requested name.
-          const r = await api.chatSlotModel(activeSlot, modelName)
+          // Send the scope this backend's own capabilities reported. On a
+          // harness that cannot switch in place, the default path would fall
+          // back to destroying the session — while the dropdown footer says the
+          // pick applies to the NEXT one. The scope is what keeps those two
+          // statements from being different.
+          const r = await api.chatSlotModel(activeSlot, modelName, modelCaps.switch_scope)
           return r?.model ?? modelName
         },
         (value) => dispatch(updateSlot({ key: activeSlot, model: value })))
@@ -4657,7 +4683,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     // Keep the dropdown open after selecting — the user may switch models again
     // or drill into the reasoning-effort panel. Dismiss is via outside-click/Escape.
     // setPendingModel is a stable useState setter.
-  }, [activeSlot, dispatch, setPendingModel])
+  }, [activeSlot, dispatch, setPendingModel, modelCaps.switch_scope])
   const setProject = useCallback(async (path: string) => {
     if (!activeSlot) { setPendingProject(path); return }
     try {
@@ -4678,8 +4704,6 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   }, [activeSlot, dispatch, setPendingProject])
 
   const currentSlot = slots.find(s => s.key === activeSlot)
-  // Prefer the backend bound to this slot; config is only for an unstarted slot.
-  const usesKiroModelPicker = (currentSlot?.acp_backend ?? acpBackend) === ''
   // One source for both same-meaning markers in the agent pop-up: the row's check and
   // the default-agent row's label. Reading the slot twice let them disagree.
   const activeAgentName = currentSlot?.agent || 'default'
@@ -5172,12 +5196,20 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // the authority on whether the list can be trusted — a cached list served
   // while /api/models fails is stale, not authoritative — and is subscribed to
   // rather than read, because it can flip without the list changing.
-  const _modelsDegraded = useModelsDegraded(provider.id)
+  const _modelsDegraded = useModelsDegraded(provider.id, activeSlotBackend)
   const shownModel = displayModel(
     currentSlot?.model || resolvedModel || '',
     availableModels,
     _modelsDegraded,
   )
+  // Whether to offer a reasoning-effort control. Both halves are required and
+  // neither implies the other: effort is a property of the HARNESS first (kiro's
+  // semantics are not portable to another backend) and of the MODEL second.
+  // `provider.capabilities.reasoningEffort` is deliberately not consulted — it
+  // is a static per-provider constant, and all three backends run under one
+  // provider, so it cannot tell them apart.
+  const showsEffortControl =
+    modelCaps.reasoning_effort && modelSupportsEffort(shownModel === 'auto' ? '' : shownModel)
   // True when the pin row would be a no-op: the agent already stores exactly
   // the model the composer is showing. 'auto' is the inherit spelling, never a
   // stored pin, so it never counts as pinned. Reads the slot's REAL model, not
@@ -7648,7 +7680,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               agentSource={installedAgents.find(a => a.name === (currentSlot?.agent || 'default'))?.source}
               modelName={shownModel}
               onAgentClick={provider.capabilities.agentTemplates ? (rect) => { setAgentBtnRect(rect); setAgentDropdown(!agentDropdown) } : undefined}
-              onModelClick={usesKiroModelPicker ? (rect) => { setModelBtnRect(rect); setModelDropdown(!modelDropdown) } : undefined}
+              onModelClick={modelCaps.selectable ? (rect) => { setModelBtnRect(rect); setModelDropdown(!modelDropdown) } : undefined}
               onProjectClick={(rect) => {
                 setProjectBtnRect(rect)
                 setProjectPickerOpen(o => !o)
@@ -7706,7 +7738,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               approvalMode={displayMode}
               providerId={provider.id}
               reasoningEffort={effectiveEffort}
-              onReasoningEffortClick={usesKiroModelPicker && provider.capabilities.reasoningEffort && modelSupportsEffort(shownModel === 'auto' ? '' : shownModel) ? (rect) => { setReasoningEffortBtnRect(rect); setReasoningEffortDropdown(!reasoningEffortDropdown) } : undefined}
+              onReasoningEffortClick={showsEffortControl ? (rect) => { setReasoningEffortBtnRect(rect); setReasoningEffortDropdown(!reasoningEffortDropdown) } : undefined}
               onAutoNudgeClick={setAutoNudgeOpen}
               autoNudgeLoop={autoNudgeLoop}
               autoNudgeOpen={autoNudgeOpen}
@@ -7804,7 +7836,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               document.body
             )}
             {/* Model dropdown portal — triggered from input bar */}
-            {usesKiroModelPicker && modelDropdown && modelBtnRect && createPortal(
+            {modelCaps.selectable && modelDropdown && modelBtnRect && createPortal(
               <ModelEffortDropdown
                 anchorRect={modelBtnRect}
                 dropdownRef={modelDropdownRef}
@@ -7813,10 +7845,11 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                 models={filteredModels}
                 activeModel={shownModel}
                 onSelectModel={name => switchModel(name)}
+                appliesToNextSession={modelCaps.switch_scope === 'next_session'}
                 filter={modelFilter}
                 setFilter={setModelFilter}
                 onClose={() => setModelDropdown(false)}
-                hasEffort={!!(activeSlot && provider.capabilities.reasoningEffort && modelSupportsEffort(shownModel === 'auto' ? '' : shownModel))}
+                hasEffort={!!(activeSlot && showsEffortControl)}
                 slot={activeSlot}
                 currentEffort={currentSlot?.reasoning_effort || ''}
                 defaultEffort={defaultEffort}
@@ -7849,7 +7882,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               onSelect={path => { setProject(path); setProjectPickerOpen(false) }}
             />
             {/* Reasoning effort dropdown portal */}
-            {usesKiroModelPicker && reasoningEffortDropdown && reasoningEffortBtnRect && activeSlot && provider.capabilities.reasoningEffort && modelSupportsEffort(shownModel === 'auto' ? '' : shownModel) && createPortal(
+            {showsEffortControl && reasoningEffortDropdown && reasoningEffortBtnRect && activeSlot && createPortal(
               <div ref={reasoningEffortDropdownRef} className="fixed z-[9999] animate-slide-up" style={(() => { const left = Math.max(8, Math.min(reasoningEffortBtnRect.left, window.innerWidth - 220)); return { bottom: window.innerHeight - reasoningEffortBtnRect.top + 4, left: isMobile ? 8 : left, ...(isMobile ? { right: 8, maxWidth: 'calc(100vw - 16px)' } : {}) } })()}>
                 <ReasoningEffortDropdown slot={activeSlot} currentEffort={currentSlot?.reasoning_effort || ''} defaultEffort={defaultEffort} onClose={() => setReasoningEffortDropdown(false)} />
               </div>,

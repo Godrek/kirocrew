@@ -281,6 +281,32 @@ class LLMProvider(ABC):
         picker. Default empty for a provider that advertises none."""
         return []
 
+    @property
+    def acp_backend(self) -> str | None:
+        """The ACP backend identity this provider drives, or ``None``.
+
+        ``None`` — not ``""`` — is the safe default, because ``""`` IS the
+        kiro-cli backend: defaulting to it would let any provider that never
+        stated an identity be counted as kiro, and the model picker would then
+        serve kiro's advertised list to whatever is actually running
+        (harness-parity H5). Callers filtering live providers by backend must
+        skip ``None`` rather than treat it as a match.
+
+        Declared on the ABC with a safe default rather than probed off the
+        instance, so the dashboard never has to guess from private attributes.
+        """
+        return None
+
+    def supports_model_switch(self) -> bool:
+        """Whether THIS live session accepts a model change in place.
+
+        Default False — switching a running session's model is opt-in, never
+        inherited. A provider that returns False must not be offered an
+        immediate-effect model control; the pick applies to the next session
+        instead (see ``acp.model_catalog.SCOPE_NEXT_SESSION``).
+        """
+        return False
+
     def get_valid_effort_levels(self) -> list[str]:
         """Reasoning-effort levels the provider accepts. Default empty for a
         provider with no effort control."""

@@ -31,8 +31,27 @@ import type { RootState } from '../store'
 // resolves to, and what would clobber an explicit Auto pick. Repeated as a
 // literal inside the vi.mock factory below, which is hoisted above this const.
 const AGENT_MODEL = 'claude-opus-5'
-const { kirocrewConfigMock } = vi.hoisted(() => ({
+const KIRO_CAPS = {
+  backend: '', catalog: 'kiro_cli', registry_provider: 'acp',
+  selectable: true, runtime_switch: true, switch_scope: 'live_session', reasoning_effort: true,
+}
+const { kirocrewConfigMock, modelCapabilitiesMock, modelsMock } = vi.hoisted(() => ({
   kirocrewConfigMock: vi.fn().mockResolvedValue({ agent: { acp_backend: '' } }),
+  // Hoisted so the assertions can name it directly: this file mocks the api
+  // module wholesale and never imports `api`, so reaching for `api.models` in a
+  // test is a ReferenceError rather than a spy.
+  modelsMock: vi.fn().mockResolvedValue([
+    { model_name: 'auto', description: 'Models chosen by task' },
+    { model_name: 'claude-opus-5', description: 'Claude Opus 5' },
+    { model_name: 'claude-sonnet-5', description: 'Claude Sonnet 5' },
+  ]),
+  // Capability now comes from the server, per slot. A test that leaves this
+  // unmocked gets the conservative placeholder (nothing selectable) and would
+  // assert against a composer with no model control at all.
+  modelCapabilitiesMock: vi.fn().mockResolvedValue({
+    backend: '', catalog: 'kiro_cli', registry_provider: 'acp',
+    selectable: true, runtime_switch: true, switch_scope: 'live_session', reasoning_effort: true,
+  }),
 }))
 
 interface VirtuosoMockProps {
@@ -44,13 +63,10 @@ vi.mock('../api/client', () => ({
   api: {
     chatSlots: vi.fn().mockResolvedValue([]),
     kirocrewConfig: kirocrewConfigMock,
+    modelCapabilities: modelCapabilitiesMock,
     chatSlotDetail: vi.fn().mockResolvedValue({ messages: [], running: false, has_more: false, total: 0 }),
     chatHistory: vi.fn().mockResolvedValue({ sessions: [] }),
-    models: vi.fn().mockResolvedValue([
-      { model_name: 'auto', description: 'Models chosen by task' },
-      { model_name: 'claude-opus-5', description: 'Claude Opus 5' },
-      { model_name: 'claude-sonnet-5', description: 'Claude Sonnet 5' },
-    ]),
+    models: modelsMock,
     agents: vi.fn().mockResolvedValue([]),
     agentDetail: vi.fn().mockResolvedValue({ model: 'claude-opus-5' }),
     // The backend resolver owns the default-model precedence; the composer
@@ -135,6 +151,15 @@ beforeEach(() => {
   localStorage.clear()
   vi.clearAllMocks()
   kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: '' } })
+  // vi.clearAllMocks() drops the implementation set in the hoisted factory, so
+  // every test would otherwise resolve `undefined` and fall back to the
+  // conservative "nothing selectable" placeholder.
+  modelCapabilitiesMock.mockResolvedValue({ ...KIRO_CAPS })
+  modelsMock.mockResolvedValue([
+    { model_name: 'auto', description: 'Models chosen by task' },
+    { model_name: 'claude-opus-5', description: 'Claude Opus 5' },
+    { model_name: 'claude-sonnet-5', description: 'Claude Sonnet 5' },
+  ])
 })
 
 describe('ChatPage — Auto model selection', { timeout: 15_000 }, () => {
@@ -146,9 +171,11 @@ describe('ChatPage — Auto model selection', { timeout: 15_000 }, () => {
     const autoOption = await waitFor(() => screen.getByRole('option', { name: /auto/ }))
     await act(async () => { fireEvent.click(autoOption) })
 
-    expect(api.chatSlotModel).toHaveBeenCalledWith('slot-a', 'auto')
+    // The scope rides along so the server knows whether it may touch the live
+    // session; kiro switches in place, so this pick is a `live_session` one.
+    expect(api.chatSlotModel).toHaveBeenCalledWith('slot-a', 'auto', 'live_session')
     // '' is the "never chosen" state; sending it un-sticks the pick.
-    expect(api.chatSlotModel).not.toHaveBeenCalledWith('slot-a', '')
+    expect(api.chatSlotModel).not.toHaveBeenCalledWith('slot-a', '', expect.anything())
   })
 
   it('shows Auto as the active model and does not re-resolve it to the agent model', async () => {
@@ -160,16 +187,48 @@ describe('ChatPage — Auto model selection', { timeout: 15_000 }, () => {
     expect(autoOption.getAttribute('aria-selected')).toBe('true')
   })
 
-  it('keeps Kiro controls for a Kiro session when the new-session default is Codex', async () => {
+  it('keeps Kiro models for a Kiro session when the new-session default is Codex', async () => {
+    // The live-binding contract. The list is fetched under the SLOT's backend,
+    // so changing the default for new sessions cannot re-point this composer at
+    // another harness's vocabulary.
     kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: 'codex' } })
     await renderChat(AGENT_MODEL, '')
     expect(await waitFor(() => screen.getByTitle(`Model: ${AGENT_MODEL}`))).toBeTruthy()
+    await waitFor(() => expect(modelsMock).toHaveBeenCalledWith(''))
+    expect(modelsMock).not.toHaveBeenCalledWith('codex')
   })
 
-  it('hides Kiro controls for a Codex session when the new-session default is Kiro', async () => {
+  it('shows a Codex session Codex models when the new-session default is Kiro', async () => {
+    // The mirror direction, and the behaviour change: a non-Kiro session is no
+    // longer hidden on principle — it gets its OWN list.
     kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: '' } })
+    modelCapabilitiesMock.mockResolvedValue({
+      ...KIRO_CAPS, backend: 'codex', catalog: 'advertised', registry_provider: '',
+      reasoning_effort: false,
+    })
     await renderChat(AGENT_MODEL, 'codex')
-    await waitFor(() => expect(screen.queryByTitle(/^Model: /)).toBeNull())
+    await waitFor(() => expect(modelsMock).toHaveBeenCalledWith('codex'))
+    expect(modelsMock).not.toHaveBeenCalledWith('')
+  })
+
+  it('shows a Claude session Claude models when the new-session default is Kiro', async () => {
+    kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: '' } })
+    modelCapabilitiesMock.mockResolvedValue({
+      ...KIRO_CAPS, backend: 'claude', catalog: 'registry', registry_provider: 'claude_code',
+    })
+    await renderChat(AGENT_MODEL, 'claude')
+    await waitFor(() => expect(modelsMock).toHaveBeenCalledWith('claude'))
+    expect(modelsMock).not.toHaveBeenCalledWith('')
+  })
+
+  it('renders no model control when the backend reports none is selectable', async () => {
+    // Truthfully absent rather than an empty dropdown.
+    modelCapabilitiesMock.mockResolvedValue({
+      ...KIRO_CAPS, backend: 'codex', catalog: 'none', selectable: false,
+      switch_scope: 'none', reasoning_effort: false,
+    })
+    await renderChat(AGENT_MODEL, 'codex')
+    await waitFor(() => expect(modelCapabilitiesMock).toHaveBeenCalled())
     expect(screen.queryByRole('option', { name: /claude-opus-5/ })).toBeNull()
   })
 

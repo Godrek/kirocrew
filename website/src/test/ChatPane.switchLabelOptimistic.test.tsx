@@ -102,7 +102,7 @@ describe('ChatPane — model switch updates the pane label without a slot-list r
     const option = await waitFor(() => screen.getByRole('option', { name: /claude-sonnet-5/ }))
     await act(async () => { fireEvent.click(option) })
 
-    await waitFor(() => expect(api.chatSlotModel).toHaveBeenCalledWith('pane-1', 'claude-sonnet-5'))
+    await waitFor(() => expect(api.chatSlotModel).toHaveBeenCalledWith('pane-1', 'claude-sonnet-5', 'live_session'))
     await waitFor(() => expect(store.getState().dashboard.slots.find(s => s.key === 'pane-1')?.model).toBe('claude-sonnet-5'))
     // The label moved because the store was written, not because anything
     // re-fetched the slot list (and no websocket exists in this harness).

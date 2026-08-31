@@ -233,14 +233,15 @@ class TestNoRedundantConfigLoad:
         monkeypatch.setattr(KiroCrewConfig, "load", staticmethod(counting))
         return calls
 
-    def test_supplied_provider_skips_the_load(self, monkeypatch):
+    def test_supplied_backend_skips_the_load(self, monkeypatch):
+        from kiro_crew.acp.types import ACP_BACKEND_KIRO
         from kiro_crew.dashboard.chat_handlers import _model_rejected_reason
 
         calls = self._counting_load(monkeypatch)
-        _model_rejected_reason("claude-opus-4-8", provider="acp")
+        _model_rejected_reason("claude-opus-4-8", ACP_BACKEND_KIRO)
         assert calls == []
 
-    def test_omitted_provider_still_resolves_it(self, monkeypatch):
+    def test_omitted_backend_still_resolves_it(self, monkeypatch):
         """The default must preserve the original behaviour for existing callers."""
         from kiro_crew.dashboard.chat_handlers import _model_rejected_reason
 
@@ -248,12 +249,13 @@ class TestNoRedundantConfigLoad:
         _model_rejected_reason("claude-opus-4-8")
         assert len(calls) == 1
 
-    def test_validator_forwards_the_provider(self, monkeypatch):
+    def test_validator_forwards_the_backend(self, monkeypatch):
+        from kiro_crew.acp.types import ACP_BACKEND_KIRO
         from kiro_crew.dashboard.handlers.core import _validate_role_model
 
         calls = self._counting_load(monkeypatch)
         request = SimpleNamespace(app={})
-        _validate_role_model("claude-opus-4-8", request, provider="acp")
+        _validate_role_model("claude-opus-4-8", request, ACP_BACKEND_KIRO)
         assert calls == []
 
     def test_live_entitlements_preserve_the_registry_correction(self, monkeypatch):

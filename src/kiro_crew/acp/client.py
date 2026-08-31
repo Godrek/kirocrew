@@ -2327,7 +2327,13 @@ class AcpClient:
         # Dynamic config from ACP session/new response and config_option_update notifications.
         # Only the effort configOptions are consumed (model lists come from
         # _capture_available_models, which parses the real dict-shaped `models`).
-        self._acp_config_options: list[dict] = []
+        # None until the backend ANSWERS the configOptions question; a list once
+        # it has, INCLUDING an empty one. Those are opposite facts — "ask again
+        # later" versus "this build offers none" — and an empty list cannot carry
+        # both. Encoding the difference in the type rather than in a companion
+        # flag is what keeps them from drifting: there is one field to assign, so
+        # a writer cannot record the options and forget to record that it asked.
+        self._acp_config_options: list[dict] | None = None
 
     @property
     def backend(self) -> str:
@@ -2670,8 +2676,13 @@ class AcpClient:
 
     @property
     def acp_config_options(self) -> list[dict]:
-        """Config options reported by ACP (effort, model, mode selectors)."""
-        return self._acp_config_options
+        """Config options reported by ACP (effort, model, mode selectors).
+
+        Flattens the un-reported state to ``[]`` for readers that only care what
+        was offered. Whether the backend has ANSWERED is a separate question,
+        and ``supports_config_option`` is the one that asks it.
+        """
+        return self._acp_config_options or []
 
     def supports_config_option(self, config_id: str) -> bool:
         """Whether the session advertised a config option with this id.
@@ -2682,11 +2693,20 @@ class AcpClient:
         value-level rejection). Callers gate on this so an adapter that lacks
         the option is a silent no-op rather than a noisy error + session reset.
 
-        Returns True when no config options were reported yet, so that a
-        backend which advertises options lazily (after the first turn) is not
+        Returns True when the backend has not reported configOptions AT ALL, so
+        a backend which advertises them lazily (after the first turn) is not
         permanently treated as unsupported.
+
+        An explicitly reported EMPTY list is the opposite answer and returns
+        False. The two must not collapse onto "the list is falsy": a build that
+        says ``configOptions: []`` has told us it offers none, and reading that
+        as "not asked yet" reports it as switchable — the caller then sends
+        ``session/set_config_option``, gets ``Unknown config option``, and falls
+        back to resetting the user's chat. This is also what lets a live reading
+        DOWNGRADE a static capability claim; without the distinction the
+        downgrade path is unreachable for exactly the builds it exists for.
         """
-        if not self._acp_config_options:
+        if self._acp_config_options is None:
             return True
         return any(
             isinstance(opt, dict) and opt.get("id") == config_id for opt in self._acp_config_options
@@ -2698,7 +2718,7 @@ class AcpClient:
         Parses configOptions for the entry with id="effort" and extracts its
         options[].value list in the order ACP reported them.
         """
-        for opt in self._acp_config_options:
+        for opt in self._acp_config_options or []:
             if not isinstance(opt, dict):
                 continue
             if opt.get("id") == "effort":

@@ -1391,6 +1391,14 @@ export function useWebSocket() {
             // spawned" so an unexpected emitter cannot reintroduce that.
             if (ev.kind === 'session' && ev.spawned === true) {
               queryClient.invalidateQueries({ queryKey: ['available-models'] })
+              // Capabilities move on the same event and for the same reason.
+              // A slot answered before it had a session reports what could be
+              // known then — for an adapted harness, nothing selectable — and
+              // that answer is cached forever otherwise, because queries here
+              // never go stale on their own. The picker would stay hidden on a
+              // backend whose session has since advertised a full model list,
+              // with the model query still disabled behind `selectable`.
+              queryClient.invalidateQueries({ queryKey: ['model-capabilities'] })
             }
             dispatch(sseActivityEvent(ev))
             break

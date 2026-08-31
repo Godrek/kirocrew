@@ -22,6 +22,12 @@ from pathlib import Path
 
 import pytest
 
+from kiro_crew.acp.types import (
+    ACP_BACKEND_CLAUDE,
+    ACP_BACKEND_CODEX,
+    ACP_BACKEND_KAS,
+    ACP_BACKEND_KIRO,
+)
 from kiro_crew.config.loader import (
     KiroCrewAgentConfig,
     KiroCrewConfig,
@@ -331,3 +337,64 @@ class TestSessionModelCoversEverySurface:
         )
         cfg.agent.model = "claude-haiku-4.5"
         assert _session_model(cfg, "oncall") == "claude-haiku-4.5"
+
+
+class TestSessionModelStaysInTheBackendsNamespace:
+    """A new session must never be handed a model id its own wire rejects.
+
+    Every tier `_session_model` resolves is kiro-namespaced: `agent.model` is the
+    kiro family's global, and a named agent's pin is read out of kiro-cli's own
+    `~/.kiro/agents/*.json`. Passing either to an adapted harness produces a
+    session that dies on its first prompt with an unknown model id — and it does
+    so at spawn, where nothing is looking.
+    """
+
+    def test_kiro_global_is_not_handed_to_an_adapted_backend(self, specs_dir: Path) -> None:
+        cfg = _cfg({"oncall": {"kiro_agent": "unpinned", "model": ""}}, "claude-opus-4.8")
+        cfg.agent.acp_backend = ACP_BACKEND_CODEX
+        # None = inherit whatever Codex served, which is the only truthful answer
+        # available. Translating is not an option: the namespaces have no
+        # correspondence to translate through.
+        assert _session_model(cfg, "oncall") is None
+
+    def test_kiro_family_still_reads_the_global(self, specs_dir: Path) -> None:
+        # Harness parity: the kiro path is untouched, including for KAS, which
+        # shares kiro's ids.
+        cfg = _cfg({"oncall": {"kiro_agent": "unpinned", "model": ""}}, "claude-opus-4.8")
+        for backend in (ACP_BACKEND_KIRO, ACP_BACKEND_KAS):
+            cfg.agent.acp_backend = backend
+            assert _session_model(cfg, "oncall") == "claude-opus-4.8"
+
+    def test_adapted_backend_reads_its_own_configured_default(self, specs_dir: Path) -> None:
+        cfg = _cfg({"oncall": {"kiro_agent": "unpinned", "model": ""}}, "claude-opus-4.8")
+        cfg.agent.acp_backend = ACP_BACKEND_CLAUDE
+        cfg.agent.backend_models = {"claude": "opus-4.8-1m"}
+        assert _session_model(cfg, "oncall") == "opus-4.8-1m"
+
+    def test_a_crew_pin_from_another_vocabulary_is_dropped_not_translated(
+        self, specs_dir: Path
+    ) -> None:
+        # A crew pin is an explicit user choice, so it is never silently swapped
+        # for a DIFFERENT model. Dropping it to "inherit" is the one move that
+        # neither lies about what will run nor starts a session that cannot.
+        # `opus-4.6-1m` is a real kiro model with no claude_code id at all.
+        cfg = _cfg({"oncall": {"kiro_agent": "unpinned", "model": "opus-4.6-1m"}}, "")
+        cfg.agent.acp_backend = ACP_BACKEND_CLAUDE
+        assert _session_model(cfg, "oncall") is None
+
+    def test_a_pin_is_not_dropped_on_a_backend_whose_vocabulary_is_unknown(
+        self, specs_dir: Path
+    ) -> None:
+        # Codex has no curated column and has advertised nothing, so there is no
+        # evidence this pin is wrong. Refusing it here would be accusing on no
+        # evidence — the same conservative default `model_is_unusable` takes for
+        # an unknown advertised set. The pin only gets dropped where a real
+        # allowlist positively excludes it.
+        cfg = _cfg({"oncall": {"kiro_agent": "unpinned", "model": "claude-opus-4.8"}}, "")
+        cfg.agent.acp_backend = ACP_BACKEND_CODEX
+        assert _session_model(cfg, "oncall") == "claude-opus-4.8"
+
+    def test_a_crew_pin_the_backend_can_run_survives(self, specs_dir: Path) -> None:
+        cfg = _cfg({"oncall": {"kiro_agent": "unpinned", "model": "opus-4.8-1m"}}, "")
+        cfg.agent.acp_backend = ACP_BACKEND_CLAUDE
+        assert _session_model(cfg, "oncall") == "opus-4.8-1m"

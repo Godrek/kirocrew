@@ -19,6 +19,7 @@ from kiro_crew.acp.client import (
     advertised_model_ids,
     model_is_unusable,
 )
+from kiro_crew.acp.model_catalog import backend_model_capabilities
 from kiro_crew.acp.runtime import AcpRuntime, AcpRuntimeError
 from kiro_crew.acp.session_handle import AcpSessionHandle
 from kiro_crew.acp.session_provider import AcpSessionProvider
@@ -30,8 +31,10 @@ from kiro_crew.acp.types import (
     ACP_BACKENDS_ACP_RUNTIME,
     ACP_BACKENDS_KIRO_IDENTITY_STORE,
     ACP_BACKENDS_KNOWN,
+    ACP_BACKENDS_MODEL_CONFIG_OPTION,
     ACP_BACKENDS_SESSION_SHARING,
     EVENT_COMPACTION_STATUS,
+    MODEL_CONFIG_ID,
     PROVIDER_LABEL_CLAUDE,
     PROVIDER_LABEL_CODEX,
     PROVIDER_LABEL_DEFAULT,
@@ -447,6 +450,19 @@ class AcpProvider(LLMProvider):
         the underlying client (``self._client._work_dir``), not the provider.
         """
         return str(self._client._work_dir)
+
+    @property
+    def acp_backend(self) -> str | None:
+        """This session's OWN ACP backend identity.
+
+        The live-bound answer, read off the client rather than off
+        ``agent.acp_backend``: the configured value is the default for the NEXT
+        session, and a slot created before the operator changed it is still
+        running the harness it was started on. Every model surface resolves its
+        vocabulary through this, so changing the default can never make an
+        existing session display another backend's models.
+        """
+        return self._client.backend
 
     @property
     def is_claude_backend(self) -> bool:
@@ -930,6 +946,23 @@ class AcpProvider(LLMProvider):
         Claude list) rather than a hardcoded set.
         """
         return self._client.available_models()
+
+    def supports_model_switch(self) -> bool:
+        """Whether THIS live session takes a model change in place.
+
+        Static membership is the ceiling; the live ``configOptions`` reading can
+        only lower it. Resolution lives in ``acp.model_catalog`` so the composer,
+        the settings page, and the API cannot form three different opinions —
+        this method only supplies the live half of the input.
+        """
+        backend = self._client.backend
+        confirmed: bool | None = None
+        if backend in ACP_BACKENDS_MODEL_CONFIG_OPTION:
+            # Ask the session, not the harness: an older adapter build of a
+            # member backend may simply not expose the option. ``None`` when
+            # nothing has initialized, which leaves the static claim standing.
+            confirmed = self._client.supports_config_option(MODEL_CONFIG_ID)
+        return backend_model_capabilities(backend, live_switch_confirmed=confirmed).runtime_switch
 
     def get_valid_effort_levels(self) -> list[str]:
         """Effort levels the backend reported for the CURRENT model, in ACP order.

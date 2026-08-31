@@ -301,6 +301,49 @@ the idle shortcut active from the start (the pre-ceiling behavior).
 | `has_active_turn()` | Returns `True` while a prompt is in flight and not yet complete |
 | `shutdown()` | Kill kiro-cli process |
 
+### Model vocabulary is per-backend
+
+`_capture_available_models` parses the `session/new` / `session/load` `models`
+object (`availableModels` + `currentModelId`) for **every** backend, so ACP itself
+supplies runtime discovery wherever a harness advertises. What ACP does not
+supply is a *pre-session* answer, and that is what
+[`acp/model_catalog.py`](../../../src/kiro_crew/acp/model_catalog.py) resolves
+from the opt-in membership sets in `acp/types.py` (harness-parity `H6`/`H9`):
+
+| Question | Resolved from | Today |
+|---|---|---|
+| Where do this backend's options come from? | `ACP_BACKENDS_KIRO_MODEL_CATALOG` / `ACP_BACKENDS_REGISTRY_MODEL_CATALOG` | kiro + KAS read `kiro chat --list-models`; claude reads the `claude_code` registry column; codex has neither and shows only what its own session advertised |
+| Can a LIVE session change model in place? | `ACP_BACKENDS_SET_MODEL_METHOD` (`session/set_model`) ∪ `ACP_BACKENDS_MODEL_CONFIG_OPTION` (`session/set_config_option`, `MODEL_CONFIG_ID`) | kiro switches by method; KAS/claude/codex by config option, and the static claim is **downgraded** by the live `supports_config_option` reading so an adapter build lacking the option is not reported as switchable |
+| Does the harness have a reasoning-effort control? | `ACP_BACKENDS_REASONING_EFFORT` | kiro + KAS (cli.json overlay at spawn), claude (live `configOptions`); codex none |
+
+Three rules hold at every consumer. **Never borrow a vocabulary:** a backend in
+neither catalog set shows NO picker — not an empty one — plus an honest statement
+that the backend chooses for itself, because every id from another harness is one
+its own wire rejects. **A live reading can only lower a static claim, never raise
+one** — otherwise a harness that merely advertised an option would inherit a
+capability nobody granted it. **One allowlist answers both halves:**
+`model_catalog.allowed_model_ids` is what the picker offers from AND what the
+set-model guard admits, so a row the dashboard shows cannot be an id the write
+path refuses. Both halves read the union of the static column and what the LIVE
+session advertised, so an adapter-advertised model the registry has not been
+taught is offered *and* accepted, and a catalog-less harness admits only what its
+own session actually offered.
+
+A harness that cannot enumerate its own models (claude-agent-acp has no
+list-models call) is served from a curated `model_registry.json` provider column.
+**Adding that column is not a data-only change.** The column makes the picker
+emit canonical registry keys, and `_wire_model_id` must already know how to
+translate them for that harness — it handles the claude namespace explicitly and
+sends everything else through `to_acp_id`, which answers in *kiro's*. So a
+harness joins `ACP_BACKENDS_REGISTRY_MODEL_CATALOG` in the same change that
+teaches the wire its namespace, never before: membership alone would let a later
+registry row hand that harness a kiro id with no code review. Codex is
+deliberately outside the set for exactly this reason.
+
+The dashboard surface is `GET /api/models?backend=&slot=` (routed by catalog
+source, not by backend identity) and `GET /api/model-capabilities`, which exists
+so the frontend stops inferring capability from `backend === ''`.
+
 ### Extension Notifications
 
 `stream_events()` yields events for kiro-cli extension notifications:

@@ -112,6 +112,11 @@ ACP_BACKEND_KAS = "kas"
 # The kiro-cli backend is spelled as the empty string throughout, so name it
 # rather than leaving every call site to infer it from "not claude".
 ACP_BACKEND_KIRO = ""
+
+# What to CALL the kiro backend in a message a user reads. Its id is empty, so
+# any error naming the backend would otherwise render a blank where the harness
+# should be.
+ACP_BACKEND_KIRO_LABEL = "kiro"
 # Membership gate for the ``acp_backend`` kwarg. An unrecognized value would
 # otherwise fall through every ``_is_<backend>`` check and silently spawn
 # kiro-cli, so provider construction rejects it instead.
@@ -196,6 +201,71 @@ ACP_BACKENDS_ACP_RUNTIME = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS})
 # account's credentials. Positive membership rather than "not claude"
 # (harness-parity H5).
 ACP_BACKENDS_KIRO_IDENTITY_STORE = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS})
+
+# ── Model-selection capability membership (harness-parity H6/H7) ──
+# Three orthogonal questions a model picker has to answer, each an opt-in set so
+# a harness added later inherits nothing. They are deliberately separate: a
+# backend can advertise a model list it will not let you change (discovery
+# without switching), and it can accept a switch while having no catalog to
+# offer (switching without discovery). Collapsing them into one "supports
+# models" flag is what produces a picker offering options the wire rejects.
+
+# Backends whose model vocabulary comes from kiro-cli's own catalog
+# (``kiro chat --list-models``), narrowed by what a live session advertised.
+# KAS is a member because it IS kiro-cli (``kiro-cli acp --agent-engine v3``,
+# see :mod:`kiro_crew.acp.kas_transport`), so it serves the same model ids;
+# reading a different catalog for it would offer ids its own relay rejects.
+ACP_BACKENDS_KIRO_MODEL_CATALOG = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS})
+
+# Backends whose OUT-OF-BAND vocabulary is a :mod:`kiro_crew.model_registry`
+# provider column — the curated allowlist for a harness that cannot be asked what
+# it serves (claude-agent-acp exposes no list-models call). Membership says only
+# WHERE the list would come from; whether one exists is a data question the
+# column answers, so a member whose column is still empty falls through to what a
+# live session advertised rather than showing an empty picker.
+#
+# A backend in NEITHER catalog set has no static vocabulary at all and must show
+# only what a live session actually advertised, never a borrowed list.
+#
+# Codex is deliberately ABSENT. Membership is not a dormant hook: the moment a
+# ``providers.codex`` row exists the picker starts emitting canonical registry
+# keys, and the write path cannot carry them — ``_wire_model_id`` translates the
+# claude namespace explicitly and sends every other harness through
+# ``to_acp_id``, which answers in KIRO's namespace. A codex session would be
+# handed a kiro id, which is the cross-vocabulary failure this whole module
+# exists to prevent, reintroduced by a data edit with no code review. Codex joins
+# this set in the same change that teaches ``_wire_model_id`` its namespace.
+ACP_BACKENDS_REGISTRY_MODEL_CATALOG = frozenset({ACP_BACKEND_CLAUDE})
+
+# Backends that switch a LIVE session's model with ``session/set_model``.
+# kiro-cli is the only one: KAS explicitly implements no ``session/set_model``
+# (its model moves through :data:`MODEL_CONFIG_ID`), and the protocol-v1
+# adapters use the config-option channel below.
+ACP_BACKENDS_SET_MODEL_METHOD = frozenset({ACP_BACKEND_KIRO})
+
+# Backends that switch a live session's model through
+# ``session/set_config_option`` with :data:`MODEL_CONFIG_ID`. Membership is a
+# STATIC claim that the channel exists for that harness; whether a given session
+# actually exposes the option is a separate LIVE check
+# (``supports_config_option``), because an older adapter build can omit it.
+# Codex is a member on the strength of the shared protocol-v1 config-option path
+# it runs through (``AcpClient._is_standard_acp``), and the live check is what
+# keeps that from hardening into a claim about a session that never made it.
+ACP_BACKENDS_MODEL_CONFIG_OPTION = frozenset(
+    {ACP_BACKEND_KAS, ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX}
+)
+
+# Backends with ANY runtime model-switch channel. Derived from the two channels
+# rather than restated, so a harness added to either cannot be forgotten here.
+ACP_BACKENDS_RUNTIME_MODEL_SWITCH = ACP_BACKENDS_SET_MODEL_METHOD | ACP_BACKENDS_MODEL_CONFIG_OPTION
+
+# Backends carrying a reasoning-effort control at all. The kiro family applies it
+# through the cli.json overlay at spawn; claude-agent-acp advertises an
+# ``effort`` entry in ``configOptions`` and takes it live. A harness outside this
+# set gets no effort UI even when the SELECTED model supports effort elsewhere —
+# effort is a property of the harness first and the model second, and kiro's
+# semantics are not portable by assumption (harness-parity H7).
+ACP_BACKENDS_REASONING_EFFORT = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS, ACP_BACKEND_CLAUDE})
 
 # ── Provider labels ──
 # The backend identity key persisted in the session map. It indexes three

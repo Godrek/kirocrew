@@ -110,6 +110,7 @@ import { FEATURE_REQUEST_PROMPT_FALLBACK } from './prompts/featureRequest'
 import { useKeyboardShortcuts, IS_MAC } from './hooks/useKeyboardShortcuts'
 import { useInstanceShortcuts } from './hooks/useInstanceShortcuts'
 import { useCommandPalette } from './hooks/useCommandPalette'
+import { coldStartCapabilities, type ModelCapabilities, type ModelSwitchScope } from './providers/acpBackends'
 import { useProvider } from './providers/context'
 import { useAgents } from './hooks/useAgents'
 import ShortcutsModal from './components/ShortcutsModal'
@@ -1676,6 +1677,51 @@ export default function App() {
       dispatch(setAgentSwitchNotice(agentSwitchFailureMessage(error)))
     }
   }, [dispatch])
+  /** The model list and switch scope for `slotKey`, read from the query cache.
+   *
+   *  The keyboard cycle runs outside React, so it cannot call the hooks the
+   *  pickers use — but it must land on the SAME cache entries, because both are
+   *  partitioned by backend. Reading `['available-models', provider.id]` as an
+   *  exact key finds nothing at all now that the backend is a third segment, so
+   *  the cycle would silently do nothing; and sending no scope would let a press
+   *  destroy a live session on a harness that cannot switch in place.
+   *
+   *  The backend comes from the slot's own binding, or — for an unbound slot —
+   *  from the capability response, which is the SERVER's resolution of the same
+   *  question and names the configured backend it would be created on. Cache
+   *  cardinality cannot stand in for that: React Query keeps entries after their
+   *  surfaces unmount, so merely visiting a Kiro pane and a Codex pane would
+   *  leave two lists forever and silently kill the shortcut from then on.
+   *
+   *  With no cached capability answer the backend is genuinely unknown, and the
+   *  cycle does nothing rather than guess one and step a slot through another
+   *  harness's models.
+   */
+  const slotModelContext = useCallback((slotKey: string): {
+    models: { name: string }[]
+    scope: ModelSwitchScope | undefined
+  } => {
+    const bound = store.getState().dashboard.slots
+      .find((s: { key: string; acp_backend?: string | null }) => s.key === slotKey)?.acp_backend
+    const served = queryClient.getQueryData<ModelCapabilities>(
+      ['model-capabilities', slotKey, null],
+    )
+    const backend = bound ?? served?.backend
+    const entries = queryClient.getQueriesData<{ name: string }[]>({
+      queryKey: ['available-models', provider.id],
+    })
+    const match = backend == null
+      ? undefined
+      : entries.find(([key]) => key[2] === backend)
+    const caps = served ?? coldStartCapabilities(bound ?? undefined)
+    // `none` is the cold-start "not known yet" shape, not a scope the wire
+    // accepts — and omitting the scope is NOT the neutral choice: the server
+    // defaults to the live path, whose fallback destroys the session. So an
+    // unknown scope means do nothing at all, rather than let a keyboard shortcut
+    // reset a Claude or Codex chat whose adapter cannot switch in place.
+    if (caps.switch_scope === 'none') return { models: [], scope: undefined }
+    return { models: match?.[1] ?? [], scope: caps.switch_scope }
+  }, [provider.id, queryClient])
   useKeyboardShortcuts({ onToggleShortcutsModal: toggleShortcutsModal, onNewChat: () => newChatMutation.mutate(), disabled: shortcutsOpen,
     onToggleFocusMode: toggleFocusMode,
     onCycleAgent: () => {
@@ -1774,8 +1820,8 @@ export default function App() {
     onCycleModel: async () => {
       const activeSlot = store.getState().chat.activeSlot
       if (!activeSlot) return
-      const models = queryClient.getQueryData<{ name: string }[]>(['available-models', provider.id])
-      if (!models || models.length === 0) return
+      const { models, scope } = slotModelContext(activeSlot)
+      if (models.length === 0) return
       const slots = store.getState().dashboard.slots
       const currentSlot = slots.find((s: { key: string }) => s.key === activeSlot)
       // Step from the newest IN-FLIGHT target when one exists: each press of a
@@ -1793,7 +1839,7 @@ export default function App() {
       try {
         await performSlotSwitch('model', activeSlot, name,
           async () => {
-            const r = await api.chatSlotModel(activeSlot, name)
+            const r = await api.chatSlotModel(activeSlot, name, scope)
             return r?.model ?? name
           },
           (value) => store.dispatch(updateSlot({ key: activeSlot, model: value })))
@@ -1806,8 +1852,8 @@ export default function App() {
     onCyclePrevModel: async () => {
       const activeSlot = store.getState().chat.activeSlot
       if (!activeSlot) return
-      const models = queryClient.getQueryData<{ name: string }[]>(['available-models', provider.id])
-      if (!models || models.length === 0) return
+      const { models, scope } = slotModelContext(activeSlot)
+      if (models.length === 0) return
       const slots = store.getState().dashboard.slots
       const currentSlot = slots.find((s: { key: string }) => s.key === activeSlot)
       // See onCycleModel above.
@@ -1818,7 +1864,7 @@ export default function App() {
       try {
         await performSlotSwitch('model', activeSlot, name,
           async () => {
-            const r = await api.chatSlotModel(activeSlot, name)
+            const r = await api.chatSlotModel(activeSlot, name, scope)
             return r?.model ?? name
           },
           (value) => store.dispatch(updateSlot({ key: activeSlot, model: value })))

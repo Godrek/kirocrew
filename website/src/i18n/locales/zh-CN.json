@@ -6142,7 +6142,8 @@
       "auto_default": "默认",
       "credit_multiplier": "积分消耗为 Auto 的 {{value}}",
       "credit_multiplier_baseline": "{{value}}，积分消耗基准",
-      "no_matches": "无匹配项"
+      "no_matches": "无匹配项",
+      "applies_to_next_session": "此后端无法更改正在运行的会话的模型。你的选择将应用于下一个会话。"
     },
     "modelEffortDropdown": {
       "default_for_agent": "<agent/> 的默认模型",
@@ -11452,9 +11453,11 @@
         "backend_kiro_cli": "Kiro CLI",
         "backend_claude_code": "Claude Code",
         "backend_codex": "Codex",
-        "backend_models_not_exposed": "此后端不在这里提供模型选择。Kiro 模型设置将被隐藏，因为它们无法控制此后端。",
         "failed_to_save_agent_backend": "无法保存代理后端",
-        "backend_external": "外部后端 ({{backend}})"
+        "backend_external": "外部后端 ({{backend}})",
+        "backend_default_model_description": "新建 {{backend}} 会话时使用的模型。",
+        "backend_default_model_hint": "默认继承 {{backend}} 提供的模型。适用于新会话。",
+        "backend_selects_its_own_model": "{{backend}} 自行选择模型。{{productName}} 没有此后端的模型列表，也不会显示其他后端的列表。"
       },
       "computerUsePanel": {
         "accessibility": "辅助功能",

@@ -31,9 +31,15 @@ from kiro_crew.acp.client import (
     advertised_model_ids,
     model_is_unusable,
 )
+from kiro_crew.acp.model_catalog import backend_model_capabilities
 from kiro_crew.acp.runtime import AcpRuntime, AcpRuntimeDead, AcpRuntimeError, AcpSessionHandle
 from kiro_crew.acp.session_handle import WatchdogSettings
-from kiro_crew.acp.types import ACP_BACKENDS_KIRO_IDENTITY_STORE, STOP_REASON_END_TURN
+from kiro_crew.acp.types import (
+    ACP_BACKENDS_KIRO_IDENTITY_STORE,
+    ACP_BACKENDS_MODEL_CONFIG_OPTION,
+    MODEL_CONFIG_ID,
+    STOP_REASON_END_TURN,
+)
 from kiro_crew.config.paths import kiro_sessions_dir
 from kiro_crew.constants import COMPACT_WAIT_TIMEOUT_SECS
 from kiro_crew.mcp_gateway.claim import schedule_claim
@@ -646,6 +652,29 @@ class AcpSessionProvider(LLMProvider):
     def available_models(self) -> list[dict[str, str]]:
         """Models advertised by the backend."""
         return self._handle.available_models
+
+    @property
+    def acp_backend(self) -> str | None:
+        """The backend this shared runtime drives (kiro-cli or KAS).
+
+        Read from the runtime rather than from config: a session on this adapter
+        keeps the harness its runtime was started on, whatever the operator has
+        since made the default.
+        """
+        return self._runtime.acp_backend
+
+    def supports_model_switch(self) -> bool:
+        """Whether this shared-runtime session takes a model change in place.
+
+        Same resolution as ``AcpProvider`` — static membership lowered by the
+        session's own ``configOptions`` — so a subagent's provider and its
+        parent's cannot report different capabilities for one runtime.
+        """
+        backend = self._runtime.acp_backend
+        confirmed: bool | None = None
+        if backend in ACP_BACKENDS_MODEL_CONFIG_OPTION:
+            confirmed = self._handle.supports_config_option(MODEL_CONFIG_ID)
+        return backend_model_capabilities(backend, live_switch_confirmed=confirmed).runtime_switch
 
     def pop_pending_oauth_requests(self) -> list[dict[str, str]]:
         """Drain OAuth requests captured while the shared session initialized."""

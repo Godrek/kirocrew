@@ -22,6 +22,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from kiro_crew import sandbox
+from kiro_crew.acp.types import ACP_BACKEND_KIRO
 from kiro_crew.dashboard.handlers import agents
 from kiro_crew.kiro_prerequisite import KiroPrerequisiteService
 
@@ -57,12 +58,17 @@ def _kiro_request(tmp_path: Path) -> MagicMock:
     )
     request = MagicMock()
     request.app = {"kiro_prerequisite_service": service}
+    # A REAL mapping: `?backend=` is resolved by PRESENCE, and MagicMock's `.get`
+    # answers with a truthy object that reads as an unknown backend (400) before
+    # any degraded branch under test is reached.
+    request.query = {}
     return request
 
 
 def _kiro_cfg() -> SimpleNamespace:
-    # Any non-"claude_code" provider takes the subprocess path under test.
-    return SimpleNamespace(agent=SimpleNamespace(provider="kiro"))
+    # Any non-"claude_code" provider takes the subprocess path under test, and
+    # the kiro backend is what routes /api/models to the --list-models catalog.
+    return SimpleNamespace(agent=SimpleNamespace(provider="kiro", acp_backend=ACP_BACKEND_KIRO))
 
 
 def _run(coro):

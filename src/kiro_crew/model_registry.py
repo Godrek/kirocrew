@@ -536,6 +536,37 @@ def available_models(provider: str) -> list[str]:
     return out
 
 
+def wire_allowlist(provider: str) -> frozenset[str]:
+    """Every spelling of a model ``provider`` can actually run.
+
+    The ALLOWLIST a set-model guard tests against, and the same set the picker
+    filters its rows through — one answer, so an offered row and an accepted
+    write can never disagree. Membership is deliberately wide: the canonical key
+    (what a dropdown sends), the provider id (what the wire wants), and every
+    declared alias (what a config or an older client may have persisted). All
+    three resolve through ``to_provider_id`` to the same real id, so admitting
+    them costs nothing and refusing them would reject values this module itself
+    knows how to translate.
+
+    Only entries with a NON-EMPTY id for ``provider`` are included, which is what
+    keeps ``auto`` out for a backend that declares it as ``""``: a harness with
+    no id meaning "let the server choose" cannot be handed one, and offering it
+    would promise a live switch that is really a session reset.
+
+    An empty result means the registry declares nothing for this provider — the
+    honest input to a caller that must then fall back to what a live session
+    advertised, NOT a reason to substitute another provider's vocabulary.
+    """
+    out: set[str] = set()
+    for key, entry in _REGISTRY.items():
+        if not entry.get("providers", {}).get(provider):
+            continue
+        out.add(key)
+        out.add(entry["providers"][provider])
+        out.update(a for a in (entry.get("aliases") or []) if a)
+    return frozenset(out)
+
+
 def default(provider: str) -> str:
     """Canonical key of the provider's default model (registry fallback if none)."""
     return _DEFAULTS.get(provider, _FALLBACK_CANONICAL)

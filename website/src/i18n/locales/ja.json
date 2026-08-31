@@ -6142,7 +6142,8 @@
       "auto_default": "デフォルト",
       "credit_multiplier": "Auto のクレジット消費量の {{value}}",
       "credit_multiplier_baseline": "{{value}}、クレジット消費量の基準",
-      "no_matches": "一致するものがありません"
+      "no_matches": "一致するものがありません",
+      "applies_to_next_session": "このバックエンドは実行中のセッションのモデルを変更できません。選択内容は次のセッションに適用されます。"
     },
     "modelEffortDropdown": {
       "default_for_agent": "<agent/> のデフォルトモデル",
@@ -11452,9 +11453,11 @@
         "backend_kiro_cli": "Kiro CLI",
         "backend_claude_code": "Claude Code",
         "backend_codex": "Codex",
-        "backend_models_not_exposed": "このバックエンドでは、ここでモデルを選択できません。Kiro のモデル設定はこのバックエンドを制御しないため非表示になります。",
         "failed_to_save_agent_backend": "エージェントのバックエンドを保存できませんでした",
-        "backend_external": "外部バックエンド ({{backend}})"
+        "backend_external": "外部バックエンド ({{backend}})",
+        "backend_default_model_description": "新しい {{backend}} セッションを開始するモデルです。",
+        "backend_default_model_hint": "デフォルトでは {{backend}} が提供するモデルを継承します。新しいセッションに適用されます。",
+        "backend_selects_its_own_model": "{{backend}} は自身でモデルを選択します。{{productName}} はこのバックエンドのモデル一覧を持っておらず、他のバックエンドの一覧を表示することもありません。"
       },
       "computerUsePanel": {
         "accessibility": "アクセシビリティ",

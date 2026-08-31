@@ -602,7 +602,9 @@ class AcpSessionHandle:
         # (mirrors AcpClient._resolved_model_id; avoids the profile-id
         # pinning trap where a resolved profile id poisons slot.model).
         self._resolved_model_id: str = ""
-        self._config_options: list[dict[str, Any]] = []
+        # None until the backend ANSWERS, a list once it has — including an empty
+        # one. See ``supports_config_option``; mirrors ``AcpClient``.
+        self._config_options: list[dict[str, Any]] | None = None
         self._available_models: list[dict[str, str]] = []
         # Last KAS mode id seen on a current_mode_update, so a re-assert of the
         # already-current mode does not surface a spurious agent-switch echo
@@ -1565,8 +1567,12 @@ class AcpSessionHandle:
 
     @property
     def config_options(self) -> list[dict[str, Any]]:
-        """ACP-reported configOptions (effort, model, mode selectors)."""
-        return self._config_options
+        """ACP-reported configOptions (effort, model, mode selectors).
+
+        Flattens the un-reported state to ``[]`` for readers that only care what
+        was offered; ``supports_config_option`` asks whether it was answered.
+        """
+        return self._config_options or []
 
     @property
     def available_models(self) -> list[dict[str, str]]:
@@ -1595,9 +1601,14 @@ class AcpSessionHandle:
     def supports_config_option(self, config_id: str) -> bool:
         """Whether the session advertised a config option with this id.
 
-        Returns True when no config options were reported yet (lazy backend).
+        Returns True when the backend has not reported configOptions at all (a
+        lazy backend), and False for an explicitly reported EMPTY list — a build
+        that says it offers none. Collapsing both onto "the list is falsy" grants
+        an option-less KAS build the live-switch scope, and the click then enters
+        a path the adapter cannot honour and resets the chat. Mirrors
+        ``AcpClient.supports_config_option``.
         """
-        if not self._config_options:
+        if self._config_options is None:
             return True
         return any(
             isinstance(opt, dict) and opt.get("id") == config_id
@@ -1606,7 +1617,7 @@ class AcpSessionHandle:
 
     def get_valid_effort_levels(self) -> list[str]:
         """Return valid effort levels from config options, preserving order."""
-        for opt in self._config_options:
+        for opt in self._config_options or []:
             if not isinstance(opt, dict):
                 continue
             if opt.get("id") == "effort":

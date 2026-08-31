@@ -1,5 +1,6 @@
 import { api } from '../../api/client'
 import modelTokensRaw from '../../model_tokens.json'
+import { MODEL_CACHE_BACKENDS, isKiroModelFamily } from '../acpBackends'
 import { markModelsDegraded } from '../modelListHealth'
 import { isPricedMultiplier } from '../modelList'
 import type {
@@ -53,8 +54,27 @@ interface KirocrewAgentConfig {
 // available models can change while the backend is unreachable, so a very old
 // cache could still offer a model the CLI no longer accepts (a residual, now
 // time-boxed, -32603 window). Versioned key so a shape change invalidates.
-const MODELS_CACHE_KEY = 'kc.acp.models.v1'
+const MODELS_CACHE_PREFIX = 'kc.acp.models.v2'
 const MODELS_CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24h — bound stale-model exposure
+
+/** Cache key for ONE backend's model list.
+ *
+ *  Scoped per backend, and version-bumped to v1's successor so an existing
+ *  unscoped entry is abandoned rather than read as some backend's list. A single
+ *  shared key would let the last backend to fetch decide what every picker
+ *  serves from cache on the next cold start — Codex ids offered to a Kiro
+ *  session, which is exactly the substitution the backend-aware list exists to
+ *  remove.
+ *
+ *  Three distinct cases, three distinct keys. `''` IS kiro and keys as `kiro`,
+ *  because an empty key segment is indistinguishable from a missing one.
+ *  `undefined` is "whatever is configured" — a different question, and folding
+ *  it onto kiro's entry is how a Claude dashboard comes to serve a cached Kiro
+ *  list on its next cold start. */
+function modelsCacheKey(backend: string | undefined): string {
+  if (backend === undefined) return `${MODELS_CACHE_PREFIX}.configured`
+  return `${MODELS_CACHE_PREFIX}.${backend || 'kiro'}`
+}
 
 interface CachedModels {
   ts: number
@@ -65,10 +85,10 @@ interface CachedModels {
  *  expired (older than the TTL), or unusable. Fully guarded: SSR (no
  *  localStorage), disabled storage, quota, and corrupt JSON all degrade to null
  *  so the caller falls through to auto-only. */
-function readCachedModels(): ModelInfo[] | null {
+function readCachedModels(backend?: string): ModelInfo[] | null {
   try {
     if (typeof localStorage === 'undefined') return null
-    const raw = localStorage.getItem(MODELS_CACHE_KEY)
+    const raw = localStorage.getItem(modelsCacheKey(backend))
     if (!raw) return null
     const parsed = JSON.parse(raw) as CachedModels
     if (!parsed || typeof parsed.ts !== 'number' || !Array.isArray(parsed.models)) return null
@@ -93,16 +113,23 @@ function readCachedModels(): ModelInfo[] | null {
  *  cached rows carry whatever `fetchAvailableModels` stored — the reported window
  *  when the backend gave one, else its own fallback, which is the value the
  *  lookup would have produced anyway. Either way the next live response corrects
- *  it. */
-for (const m of readCachedModels() ?? []) learnWindow(m.name, m.contextWindow ?? 0)
+ *  it.
+ *
+ *  Seeded from EVERY backend's cache, not just the active one: a context window
+ *  is a property of the model, not of the harness serving it, and a slot bound
+ *  to a backend other than the configured default still needs its window at
+ *  first paint. */
+for (const backend of MODEL_CACHE_BACKENDS) {
+  for (const m of readCachedModels(backend) ?? []) learnWindow(m.name, m.contextWindow ?? 0)
+}
 
 /** Persist a live model list with a timestamp. Best-effort — storage errors
  *  (quota, disabled, SSR) are swallowed so caching never breaks the picker. */
-function writeCachedModels(models: ModelInfo[]): void {
+function writeCachedModels(models: ModelInfo[], backend?: string): void {
   try {
     if (typeof localStorage === 'undefined') return
     const payload: CachedModels = { ts: Date.now(), models }
-    localStorage.setItem(MODELS_CACHE_KEY, JSON.stringify(payload))
+    localStorage.setItem(modelsCacheKey(backend), JSON.stringify(payload))
   } catch {
     /* quota exceeded / storage disabled — non-fatal */
   }
@@ -336,14 +363,25 @@ export class AcpAdapter implements ProviderAdapter {
     return { ok: false as const, error: 'plugin update is not supported' }
   }
 
-  async fetchAvailableModels(): Promise<ModelInfo[]> {
+  /** Models for ONE backend.
+   *
+   *  `backend` names whose vocabulary to fetch — the live backend of a bound
+   *  slot, or the configured one for a slot that has not started. Omitting it
+   *  asks for the CONFIGURED backend, which is what every caller that predates
+   *  the per-backend list gets; it must stay `undefined` all the way to
+   *  `api.models`, because defaulting it to `''` here would silently rewrite
+   *  "whatever is configured" into "kiro specifically" and serve a Kiro list to
+   *  a dashboard running Claude. The cache and the degradation flag are keyed
+   *  the same way, so a degraded response can only ever serve THIS backend's
+   *  last-good list. */
+  async fetchAvailableModels(backend?: string): Promise<ModelInfo[]> {
     try {
-      const models = await api.models()
+      const models = await api.models(backend)
       if (!Array.isArray(models) || models.length === 0) {
         // Empty/non-array success: NOT a live list — keep polling, serve the
         // last-good live list if we have one, else auto-only.
-        markModelsDegraded(this.id, true)
-        return readCachedModels() ?? this._defaultModels()
+        markModelsDegraded(this.id, backend, true)
+        return readCachedModels(backend) ?? this._defaultModels(backend)
       }
       const result = models.map((m: RawModel) => {
         // Prefer the backend's resolved window over the bundled snapshot: the
@@ -360,15 +398,15 @@ export class AcpAdapter implements ProviderAdapter {
           rateMultiplier: rowMultiplier(m),
         }
       })
-      writeCachedModels(result) // remember this good live list for next hiccup
-      markModelsDegraded(this.id, false) // live success → self-heal can stop polling
+      writeCachedModels(result, backend) // remember this good live list per backend
+      markModelsDegraded(this.id, backend, false) // live success → self-heal can stop polling
       return result
     } catch {
       // Transient backend failure (503 / network): NOT live — keep polling.
       // Serve the last-good live list if we have one, else auto-only. Never
       // surface canonical registry keys — the ACP CLI rejects them (-32603).
-      markModelsDegraded(this.id, true)
-      return readCachedModels() ?? this._defaultModels()
+      markModelsDegraded(this.id, backend, true)
+      return readCachedModels(backend) ?? this._defaultModels(backend)
     }
   }
 
@@ -378,9 +416,16 @@ export class AcpAdapter implements ProviderAdapter {
    *  fable-5-1m, …). Those keys are DISPLAY identifiers the ACP CLI rejects as
    *  model ids: selecting one during the cold-start window writes it verbatim
    *  into slot.model and kiro-cli fails the turn with -32603 "model not
-   *  available". "auto" always resolves server-side, so it is the only safe
-   *  offering until the real list loads. */
-  private _defaultModels(): ModelInfo[] {
+   *  available". "auto" resolves server-side on the kiro family, so it is the
+   *  only safe offering there until the real list loads.
+   *
+   *  For any OTHER backend the safe offering is NOTHING. "auto" is not a
+   *  universal sentinel: claude-agent-acp declares no id for it, so offering it
+   *  during a failed fetch hands the user a row whose only possible outcome is a
+   *  session reset. An empty list is the truthful degradation — the picker
+   *  renders its own "no options" state rather than one bad option. */
+  private _defaultModels(backend?: string): ModelInfo[] {
+    if (!isKiroModelFamily(backend)) return []
     return [{
       name: 'auto',
       description: 'Models chosen by task for optimal usage and consistent quality',

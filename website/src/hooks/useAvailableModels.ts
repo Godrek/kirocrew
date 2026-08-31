@@ -42,12 +42,24 @@ const PLACEHOLDER: ModelInfo[] = [{ name: 'auto', description: '' }]
  * `false` until its panel opens so merely rendering the sidebar does not spawn
  * kiro-cli. Other mounted observers still fetch normally — `enabled` gates who
  * *triggers* a fetch, not what lands in the cache.
+ *
+ * ## Why `backend` is part of the KEY, not just the fetcher
+ *
+ * The backends' model vocabularies are disjoint, so two surfaces asking about
+ * different backends are asking different questions. Sharing one cache entry
+ * between them would let a Codex pane's answer become what a Kiro composer
+ * renders — the same "whoever fetched last wins" failure the single-fetcher rule
+ * above exists to prevent, one level up. Callers that omit `backend` ask about
+ * the configured one and share a single entry among themselves, so nothing about
+ * the one-spawn guarantee changes for them.
  */
-export function useAvailableModels({ enabled }: { enabled?: boolean } = {}): ModelInfo[] {
+export function useAvailableModels(
+  { enabled, backend }: { enabled?: boolean; backend?: string } = {},
+): ModelInfo[] {
   const provider = useProvider()
   const { data } = useQuery({
-    queryKey: ['available-models', provider.id],
-    queryFn: async () => withAutoFirst(await provider.fetchAvailableModels()),
+    queryKey: ['available-models', provider.id, backend ?? null],
+    queryFn: async () => withAutoFirst(await provider.fetchAvailableModels(backend)),
     refetchInterval: modelListRefetchInterval,
     ...(enabled === undefined ? {} : { enabled }),
   })

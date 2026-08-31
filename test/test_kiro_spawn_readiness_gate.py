@@ -79,6 +79,14 @@ def _request(service: KiroPrerequisiteService) -> MagicMock:
     the real guard runs either way. ``state`` also carries the background-task
     set ``api_sessions_usage`` uses, so a removed gate reaches the scheduling
     line instead of dying on an unrelated AttributeError.
+
+    ``query`` is a REAL mapping rather than the MagicMock default. ``/api/models``
+    resolves which backend's vocabulary is being asked for before it reaches the
+    kiro spawn, and a MagicMock answers ``query.get("backend")`` with a truthy
+    object — an unrecognized backend, which the handler refuses with 400. That
+    short-circuit still never spawns, so the gate's own invariant would hold
+    while every assertion here read the wrong status for the wrong reason. An
+    empty mapping is what a real no-parameter request carries.
     """
 
     tasks: set[object] = set()
@@ -91,6 +99,7 @@ def _request(service: KiroPrerequisiteService) -> MagicMock:
     }
     request = MagicMock()
     request.app = app
+    request.query = {}
     return request
 
 

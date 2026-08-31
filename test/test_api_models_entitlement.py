@@ -21,6 +21,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from kiro_crew.acp.client import model_is_unusable
+from kiro_crew.acp.types import ACP_BACKEND_KIRO
 from kiro_crew.dashboard.handlers import agents
 from kiro_crew.kiro_prerequisite import KiroPrerequisiteService
 
@@ -40,8 +41,18 @@ def _stub_wrap_argv(argv: list[str], **kwargs: Any) -> tuple[list[str], None]:
     return argv, None
 
 
-def _provider(models: object, *, getter: bool = True, raises: bool = False) -> MagicMock:
+def _provider(
+    models: object,
+    *,
+    getter: bool = True,
+    raises: bool = False,
+    backend: str = ACP_BACKEND_KIRO,
+) -> MagicMock:
     provider = MagicMock()
+    # Entitlement is read only from sessions of the SAME harness, so a provider
+    # has to say which one it is. A MagicMock would otherwise answer any
+    # attribute, and the narrowing would silently read a foreign backend's list.
+    provider.acp_backend = backend
     if not getter:
         # A provider type with no available_models attribute at all (the
         # claude-code placeholder before session init).
@@ -66,10 +77,15 @@ def _names(rows: list[dict]) -> list[str]:
     return [r["model_name"] for r in rows]
 
 
+def _entitled(request: MagicMock, backend: str = ACP_BACKEND_KIRO) -> list[dict]:
+    """Narrow ``CATALOG`` by what a live *backend* session advertised."""
+    return agents._entitled_kiro_models(request, CATALOG, backend)
+
+
 def test_advertised_narrows_the_catalog():
     # The free tier advertises auto + sonnet only: opus rows must not survive.
     request = _request(_provider([{"modelId": "auto"}, {"modelId": "claude-sonnet-5"}]))
-    assert _names(agents._entitled_kiro_models(request, CATALOG)) == ["auto", "claude-sonnet-5"]
+    assert _names(_entitled(request)) == ["auto", "claude-sonnet-5"]
 
 
 def test_a_spelling_the_wire_rejects_is_not_offered():
@@ -82,7 +98,7 @@ def test_a_spelling_the_wire_rejects_is_not_offered():
     # `model_is_unusable` instead of folding spellings.
     request = _request(_provider([{"modelId": "auto"}, {"modelId": "claude-opus-4-8"},
                                  {"modelId": "claude-opus-5"}]))
-    assert _names(agents._entitled_kiro_models(request, CATALOG)) == ["auto", "claude-opus-5"]
+    assert _names(_entitled(request)) == ["auto", "claude-opus-5"]
 
 
 def test_picker_and_wire_never_disagree_row_by_row():
@@ -90,7 +106,7 @@ def test_picker_and_wire_never_disagree_row_by_row():
     # predicate rather than a hardcoded expectation.
     advertised = ["auto", "claude-opus-4-8", "claude-sonnet-5"]
     request = _request(_provider([{"modelId": m} for m in advertised]))
-    kept = set(_names(agents._entitled_kiro_models(request, CATALOG)))
+    kept = set(_names(_entitled(request)))
     for row in CATALOG:
         name = row["model_name"]
         if name == "auto":
@@ -106,7 +122,7 @@ def test_auto_survives_a_backend_that_does_not_advertise_it():
     # even when the backend never names it — dropping it would remove the only
     # always-valid choice.
     request = _request(_provider([{"modelId": "claude-sonnet-5"}]))
-    assert _names(agents._entitled_kiro_models(request, CATALOG)) == ["auto", "claude-sonnet-5"]
+    assert _names(_entitled(request)) == ["auto", "claude-sonnet-5"]
 
 
 def test_auto_only_entitlement_narrows_to_auto():
@@ -116,7 +132,7 @@ def test_auto_only_entitlement_narrows_to_auto():
     # namespace mismatch would hand back the whole premium catalog, which is the
     # exact symptom this narrowing exists to remove.
     request = _request(_provider([{"modelId": "auto"}]))
-    assert _names(agents._entitled_kiro_models(request, CATALOG)) == ["auto"]
+    assert _names(_entitled(request)) == ["auto"]
 
 
 def test_sentinel_only_survivor_fails_open():
@@ -131,7 +147,7 @@ def test_sentinel_only_survivor_fails_open():
             ]
         )
     )
-    assert _names(agents._entitled_kiro_models(request, CATALOG)) == _names(CATALOG)
+    assert _names(_entitled(request)) == _names(CATALOG)
 
 
 def test_newest_session_wins_over_a_stale_one():
@@ -143,7 +159,7 @@ def test_newest_session_wins_over_a_stale_one():
     stale = _provider([{"modelId": "auto"}, {"modelId": "claude-opus-5"}])
     fresh = _provider([{"modelId": "auto"}, {"modelId": "claude-sonnet-5"}])
     request = _request(stale, fresh)  # oldest first, as the dict yields them
-    assert _names(agents._entitled_kiro_models(request, CATALOG)) == ["auto", "claude-sonnet-5"]
+    assert _names(_entitled(request)) == ["auto", "claude-sonnet-5"]
 
 
 def test_newest_session_with_no_list_falls_back_to_an_older_one():
@@ -154,24 +170,24 @@ def test_newest_session_with_no_list_falls_back_to_an_older_one():
     older = _provider([{"modelId": "claude-sonnet-5"}])
     request = _request(older, fresh_but_silent)
     # `auto` is always kept — it means "inherit", so entitlement never removes it.
-    assert _names(agents._entitled_kiro_models(request, CATALOG)) == ["auto", "claude-sonnet-5"]
+    assert _names(_entitled(request)) == ["auto", "claude-sonnet-5"]
 
 
 def test_no_live_session_leaves_the_catalog_alone():
     # Nothing has initialized yet: entitlement is unknown, not "nothing".
     request = _request()
-    assert agents._entitled_kiro_models(request, CATALOG) == CATALOG
+    assert _entitled(request) == CATALOG
 
 
 def test_missing_state_leaves_the_catalog_alone():
     request = MagicMock()
     request.app = {}
-    assert agents._entitled_kiro_models(request, CATALOG) == CATALOG
+    assert _entitled(request) == CATALOG
 
 
 def test_backend_that_advertises_nothing_leaves_the_catalog_alone():
     request = _request(_provider([]))
-    assert agents._entitled_kiro_models(request, CATALOG) == CATALOG
+    assert _entitled(request) == CATALOG
 
 
 def test_provider_without_getter_is_skipped_not_fatal():
@@ -181,12 +197,12 @@ def test_provider_without_getter_is_skipped_not_fatal():
         _provider([{"modelId": "claude-sonnet-5"}]),
     )
     # `auto` is always kept — it means "inherit", so entitlement never removes it.
-    assert _names(agents._entitled_kiro_models(request, CATALOG)) == ["auto", "claude-sonnet-5"]
+    assert _names(_entitled(request)) == ["auto", "claude-sonnet-5"]
 
 
 def test_getter_raising_is_skipped_not_fatal():
     request = _request(_provider(None, raises=True))
-    assert agents._entitled_kiro_models(request, CATALOG) == CATALOG
+    assert _entitled(request) == CATALOG
 
 
 def test_disjoint_advertised_set_fails_open():
@@ -194,14 +210,14 @@ def test_disjoint_advertised_set_fails_open():
     # bare/prefixed split) intersects nothing. Filtering there would empty the
     # picker, so the catalog is returned untouched.
     request = _request(_provider([{"modelId": "global.anthropic.claude-opus-4-8[1m]"}]))
-    assert agents._entitled_kiro_models(request, CATALOG) == CATALOG
+    assert _entitled(request) == CATALOG
 
 
 def test_malformed_advertised_entries_are_ignored():
     # advertised_model_ids tolerates junk; a list that yields no usable id is
     # the same as "advertised nothing".
     request = _request(_provider(["not-a-dict", {"no_model_id": 1}, {"modelId": ""}]))
-    assert agents._entitled_kiro_models(request, CATALOG) == CATALOG
+    assert _entitled(request) == CATALOG
 
 
 # ── End-to-end through the handler ──
@@ -235,6 +251,12 @@ def _kiro_request(tmp_path: Path, *providers: MagicMock) -> MagicMock:
     state.sessions.active_providers = MagicMock(return_value=list(providers))
     request = MagicMock()
     request.app = {"kiro_prerequisite_service": service, "state": state}
+    # A REAL mapping, not the MagicMock default: `?backend=` is resolved by
+    # PRESENCE (an empty value is the kiro backend, an absent one means "use the
+    # configured default"), and a MagicMock answers every `.get` with a truthy
+    # object — which resolves as an unknown backend and 400s before any of this
+    # test's setup is reached.
+    request.query = {}
     return request
 
 
@@ -244,7 +266,7 @@ def test_api_models_returns_only_entitled_rows(tmp_path):
         tmp_path, _provider([{"modelId": "auto"}, {"modelId": "claude-sonnet-5"}])
     )
     with patch.object(
-        agents.KiroCrewConfig, "load", return_value=SimpleNamespace(agent=SimpleNamespace(provider="kiro"))
+        agents.KiroCrewConfig, "load", return_value=SimpleNamespace(agent=SimpleNamespace(provider="kiro", acp_backend=ACP_BACKEND_KIRO))
     ), patch(
         "kiro_crew.acp.client._resolve_kiro_bin_for_spawn", return_value="/usr/bin/kiro-cli"
     ), patch(

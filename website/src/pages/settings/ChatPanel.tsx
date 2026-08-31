@@ -4,6 +4,8 @@ import { SettingsSection, SettingsCard, SettingsToggle, SettingsSelect, Settings
 import { loadChatConfig, saveChatConfig, type ChatConfig, type ContentWidth, type DashboardConfig, type SendMode } from '../chat/ChatSettings'
 import { api } from '../../api/client'
 import { useAvailableModels } from '../../hooks/useAvailableModels'
+import { useModelCapabilities } from '../../hooks/useModelCapabilities'
+import { ACP_BACKEND_OPTIONS, isKiroModelFamily, type AcpBackend } from '../../providers/acpBackends'
 import { EFFORT_LEVELS, effortLabel, modelSupportsEffort } from '../../lib/effort'
 import { isMac } from '../../utils/platform'
 import { capRoleOther, clampRoleOther } from '../../lib/userProfile'
@@ -66,8 +68,22 @@ const COMPLETION_KEEP_OPTIONS: CompletionKeepMode[] = ['head', 'tail', 'both']
 type VerbosityLevel = 'default' | 'concise' | 'ultra' | 'answer_only'
 const VERBOSITY_OPTIONS: VerbosityLevel[] = ['default', 'concise', 'ultra', 'answer_only']
 
-type AcpBackend = '' | 'claude' | 'codex'
-const ACP_BACKEND_OPTIONS: AcpBackend[] = ['', 'claude', 'codex']
+/**
+ * Config path holding each ADAPTED harness's default model.
+ *
+ * Written out per backend rather than interpolated. A template literal is not
+ * statically readable: `gen-settings-registry.mjs` cannot extract it into the
+ * settings registry (so a `<SettingRef>` chip would silently degrade to the CLI
+ * popover), and the i18n scanner cannot tell a built config path from a piece of
+ * user-visible copy. The keys must also match the server's `_EDITABLE_CONFIG`
+ * allowlist exactly — which covers these two backends and no others, because the
+ * kiro family's default lives at `agent.model`.
+ */
+const BACKEND_MODEL_CONFIG_KEYS: Record<string, string> = {
+  claude: 'agent.backend_models.claude',
+  codex: 'agent.backend_models.codex',
+}
+
 
 /**
  * Narrow a persisted `dashboard.verbosity` to a level this Select can render.
@@ -158,6 +174,10 @@ export function ChatPanel() {
     agent?: {
       acp_backend?: string
       model?: string
+      /** Per-backend defaults for ADAPTED harnesses, keyed by ACP backend id.
+       *  The kiro family is deliberately absent — its default is `model` above,
+       *  which is what keeps an existing configuration working unchanged. */
+      backend_models?: Record<string, string>
       role_models?: { background?: string; subagent?: string }
       role_efforts?: { background?: string; subagent?: string }
       reasoning_effort?: string
@@ -324,7 +344,10 @@ export function ChatPanel() {
   // These are the DEFAULTS for new sessions. A session's own model/effort
   // picker still overrides them per-slot; nothing here touches live sessions.
   // Same query key as every other model picker so the list is fetched once.
-  const availableModels = useAvailableModels()
+  // Scoped to the KIRO backend explicitly: these rows configure `agent.model`
+  // and the role/fallback pins, which are all kiro-namespace ids, so the list
+  // must stay kiro's even while another backend is selected below.
+  const availableModels = useAvailableModels({ backend: '' })
   // '' in config means "unset" and resolves the same way 'auto' does, so both
   // render as the 'auto' option rather than as a missing selection.
   const defaultModel = mcCfg?.agent?.model || 'auto'
@@ -350,6 +373,56 @@ export function ChatPanel() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['kirocrewConfig'] }),
     onError: () => setSaveError(i18nT('pages.settings.chatPanel.failed_to_save_default_reasoning_effort')),
   })
+
+  // ── Default model for an ADAPTED harness (agent.backend_models.<backend>) ──
+  // A separate namespace per backend, because the model vocabularies are
+  // disjoint: one shared field would make switching backend either carry a
+  // meaningless id across the boundary or destroy the other backend's saved
+  // pick. Settings asks by `backend` rather than by slot — the point is to
+  // configure a harness that may have no session running at all.
+  // The kiro FAMILY, not the kiro backend: KAS resolves its model through
+  // `agent.model` too, so testing `=== ''` would send a KAS user down the
+  // adapted branch and write their pick to a `backend_models.kas` key the server
+  // never reads — a save that reports success and changes nothing.
+  const isKiroBackend = isKiroModelFamily(acpBackend)
+  const backendCaps = useModelCapabilities({ backend: acpBackend, enabled: !isKiroBackend })
+  const backendDisplayName = ACP_BACKEND_OPTIONS.includes(acpBackend as AcpBackend)
+    ? backendLabels[ACP_BACKEND_OPTIONS.indexOf(acpBackend as AcpBackend)]
+    : unsupportedBackendLabel
+  const backendAvailableModels = useAvailableModels({
+    backend: acpBackend,
+    enabled: !isKiroBackend && backendCaps.selectable,
+  })
+  // '' in config means "inherit whatever this backend served", which is what
+  // 'auto' selects — so both render as the 'auto' row rather than as a missing
+  // selection. Never a concrete id: inventing one is how a session dies on its
+  // first prompt.
+  const backendModel = mcCfg?.agent?.backend_models?.[acpBackend] || 'auto'
+  const backendModelOptions = backendAvailableModels.map(m => m.name)
+  // A model the backend no longer advertises stays selectable, for the same
+  // reason as the kiro row above: otherwise the select silently jumps to
+  // another entry and a stray change event overwrites the stored choice.
+  if (!backendModelOptions.includes(backendModel)) backendModelOptions.unshift(backendModel)
+  // Empty for a harness this build has no config key for. The select is disabled
+  // in that case rather than writing to `''`, which the server's `_EDITABLE_CONFIG`
+  // rejects — a save that fails after the UI has already moved the selection.
+  const backendModelConfigKey = BACKEND_MODEL_CONFIG_KEYS[acpBackend] ?? ''
+  const backendModelMut = useMutation({
+    mutationFn: (v: string) => api.patchConfig(backendModelConfigKey, v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kirocrewConfig'] }),
+    onError: () => setSaveError(i18nT('pages.settings.chatPanel.failed_to_save_default_model')),
+  })
+  // Shared by the per-backend selects, which differ only in the literal
+  // `configKey` the registry generator has to be able to read.
+  const backendModelOptionLabels = backendModelOptions.map(
+    m => (m === 'auto' ? i18nT('pages.settings.chatPanel.default_auto') : m))
+  const backendModelSelectDisabled =
+    !mcQ.isSuccess || backendModelMut.isPending || !backendModelConfigKey
+  // Both halves must hold: the HARNESS must have an effort control (a server
+  // capability, never inferred from the backend id here) and the SELECTED model
+  // must accept a level. 'auto' pins nothing, so it cannot be checked — the
+  // kiro row treats it the same way.
+  const backendEffortSupported = backendCaps.reasoning_effort && modelSupportsEffort(backendModel)
 
   // ── Per-role model defaults (agent.role_models) ──
   // Same picker as the chat default above, but NOT the same precedence:
@@ -453,7 +526,7 @@ export function ChatPanel() {
             configKey="agent.acp_backend"
           />
         </SettingsCard>
-        {acpBackend === '' ? <>
+        {isKiroBackend ? <>
         {/* Grouped by role so each block reads as "which model + how hard it
             thinks" for one kind of work, rather than six stacked selects.
             Chat is the interactive default; Background and Sub-agents inherit it
@@ -548,14 +621,71 @@ export function ChatPanel() {
         </SettingsCard>
         </> : (
           <SettingsCard index={1}>
-            <div className="text-[13px] font-semibold text-text-strong">
-              {ACP_BACKEND_OPTIONS.includes(acpBackend as AcpBackend)
-                ? backendLabels[ACP_BACKEND_OPTIONS.indexOf(acpBackend as AcpBackend)]
-                : unsupportedBackendLabel}
-            </div>
-            <div className="text-[12px] text-muted">
-              {i18nT('pages.settings.chatPanel.backend_models_not_exposed')}
-            </div>
+            <div className="text-[13px] font-semibold text-text-strong">{backendDisplayName}</div>
+            {backendCaps.selectable ? (
+              <>
+                {/* One control per backend rather than one with a computed
+                    `configKey`. The settings-registry generator extracts only
+                    string LITERALS, so a variable key produces a registry entry
+                    with no config path at all — a `<SettingRef>` chip for
+                    `agent.backend_models.claude` then cannot find this control
+                    and degrades to a CLI popover, which is the same failure the
+                    template-literal form had. These are also genuinely two
+                    entries: each deep-links to its own harness's default. */}
+                {acpBackend === 'claude' && (
+                  <SettingsSelect
+                    label={i18nT('pages.settings.chatPanel.default_model')}
+                    description={i18nT('pages.settings.chatPanel.backend_default_model_description', { backend: backendDisplayName })}
+                    hint={i18nT('pages.settings.chatPanel.backend_default_model_hint', { backend: backendDisplayName })}
+                    value={backendModel}
+                    options={backendModelOptions}
+                    optionLabels={backendModelOptionLabels}
+                    onChange={v => backendModelMut.mutate(v)}
+                    disabled={backendModelSelectDisabled}
+                    configKey="agent.backend_models.claude"
+                  />
+                )}
+                {acpBackend === 'codex' && (
+                  <SettingsSelect
+                    label={i18nT('pages.settings.chatPanel.default_model')}
+                    description={i18nT('pages.settings.chatPanel.backend_default_model_description', { backend: backendDisplayName })}
+                    hint={i18nT('pages.settings.chatPanel.backend_default_model_hint', { backend: backendDisplayName })}
+                    value={backendModel}
+                    options={backendModelOptions}
+                    optionLabels={backendModelOptionLabels}
+                    onChange={v => backendModelMut.mutate(v)}
+                    disabled={backendModelSelectDisabled}
+                    configKey="agent.backend_models.codex"
+                  />
+                )}
+                {backendCaps.reasoning_effort && (
+                  <SettingsSelect
+                    label={i18nT('pages.settings.chatPanel.default_reasoning_effort')}
+                    description={i18nT('pages.settings.chatPanel.how_long_models_think_before_answering_by_defaul')}
+                    hint={
+                      backendEffortSupported
+                        ? i18nT('pages.settings.chatPanel.model_default_applies_no_override_the_model_pick')
+                        : i18nT('pages.settings.chatPanel.effort_needs_reasoning_model')
+                    }
+                    value={defaultEffort}
+                    options={[...EFFORT_LEVELS]}
+                    optionLabels={effortLabels}
+                    onChange={v => defaultEffortMut.mutate(v)}
+                    disabled={!mcQ.isSuccess || !backendEffortSupported}
+                    configKey="agent.reasoning_effort"
+                  />
+                )}
+              </>
+            ) : (
+              /* Truthfully empty, not a broken control. This backend advertises
+                 no models and has no static catalog, so there is nothing
+                 Kiro Crew could offer that it would accept — and offering
+                 another backend's vocabulary is the failure this whole path
+                 exists to prevent. */
+              <div className="text-[12px] text-muted">
+                {i18nT('pages.settings.chatPanel.backend_selects_its_own_model', { backend: backendDisplayName })}
+              </div>
+            )}
           </SettingsCard>
         )}
       </SettingsSection>

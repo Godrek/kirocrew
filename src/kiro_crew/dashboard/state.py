@@ -5407,6 +5407,19 @@ class DashboardState:
             if slot is None:
                 return
             slot.acp_backend = None
+            # The slot's pin was valid for the harness it just released. Its NEXT
+            # session is created on the configured backend, so a pin that harness
+            # cannot run has to go now — otherwise it is handed over as a model
+            # override and the new session dies on its first prompt. Runs here
+            # rather than at spawn because this is the moment the pin stops being
+            # true, and nothing else revisits it.
+            from kiro_crew.config import KiroCrewConfig as _Config
+            from kiro_crew.dashboard.chat_handlers import clear_unrunnable_slot_models
+
+            try:
+                clear_unrunnable_slot_models(self, _Config.load().agent.acp_backend)
+            except Exception:  # pragma: no cover - config load is resilient
+                logger.debug("Could not re-check slot model pins on unbind", exc_info=True)
             self.push_slots_update()
 
         self.sessions.set_provider_unbound_callback(_on_provider_unbound)

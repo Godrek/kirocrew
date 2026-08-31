@@ -17,6 +17,7 @@
         "approval_mode": "auto",
         "streaming": true,
         "model": "auto",
+        "backend_models": {},
         "role_models": {},
         "role_efforts": {},
         "fallback_model": "auto",
@@ -122,6 +123,34 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": "auto"
+    },
+    {
+      "path": "agent.backend_models",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Per-backend default models",
+      "help": "Default model for new sessions on an ADAPTED ACP harness. Keys are ACP backend ids: 'claude' (Claude Code via claude-agent-acp) and 'codex' (Codex CLI via codex-acp). The kiro family (kiro-cli and KAS) is deliberately absent — its default stays 'agent.model', so an existing configuration is unchanged. Each harness keeps its own entry because the model namespaces are disjoint, so switching 'agent.acp_backend' back and forth never overwrites or reinterprets another backend's saved choice. Empty or 'auto' means inherit whatever model the backend itself served — the only entitlement-safe default for a harness whose catalog cannot be enumerated ahead of a session.",
+      "hasChildren": true,
+      "enumValues": null,
+      "defaultValue": {}
+    },
+    {
+      "path": "agent.backend_models.*",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "*",
+      "help": "",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": null
     },
     {
       "path": "agent.role_models",

@@ -30,6 +30,10 @@ vi.mock('../api/client', () => ({
     sendChat: vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) }),
     chatHistory: vi.fn().mockResolvedValue({ sessions: [] }),
     models: vi.fn().mockResolvedValue([{ model_name: 'claude-opus-5', description: 'Claude Opus 5' }]),
+    modelCapabilities: vi.fn().mockResolvedValue({
+      backend: '', catalog: 'kiro_cli', registry_provider: 'acp',
+      selectable: true, runtime_switch: true, switch_scope: 'live_session', reasoning_effort: true,
+    }),
     agents: vi.fn().mockResolvedValue([]),
     agentDetail: vi.fn().mockResolvedValue({}),
     workspaces: vi.fn().mockResolvedValue({ workspaces: [] }),
@@ -97,19 +101,71 @@ beforeEach(() => {
     messages: [], running: false, has_more: false, total: 0,
   })
   ;(api.kirocrewConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ agent: { acp_backend: '' } })
+  ;(api.modelCapabilities as ReturnType<typeof vi.fn>).mockResolvedValue({
+    backend: '', catalog: 'kiro_cli', registry_provider: 'acp',
+    selectable: true, runtime_switch: true, switch_scope: 'live_session', reasoning_effort: true,
+  })
 })
 
+/** Capability payload for a backend that offers a picker. */
+function selectable(over: Record<string, unknown> = {}) {
+  return {
+    backend: '', catalog: 'kiro_cli', registry_provider: 'acp',
+    selectable: true, runtime_switch: true, switch_scope: 'live_session',
+    reasoning_effort: true, ...over,
+  }
+}
+
 describe('ChatPane per-session backend controls', () => {
-  it('keeps Kiro controls for a Kiro pane when the default is Codex', async () => {
+  it('asks about its OWN bound backend, not the configured default', async () => {
+    // The live-binding contract, asserted where the pane can actually get it
+    // wrong: a Kiro pane must fetch Kiro's model list even while the default
+    // for new sessions is Codex. Fetching by the configured backend would put
+    // Codex ids in this pane's picker, and every one of them is an id this
+    // session's wire rejects.
+    ;(api.kirocrewConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ agent: { acp_backend: 'codex' } })
+    renderPane('pane-kiro', { acpBackend: '' })
+    await waitFor(() => expect(api.models).toHaveBeenCalledWith(''))
+    expect(api.models).not.toHaveBeenCalledWith('codex')
+  })
+
+  it('asks by SLOT so the server can resolve the live session', async () => {
+    // Capability is per-session, not per-config: only the live session knows
+    // whether its adapter build exposes the model config option.
+    renderPane('pane-codex', { acpBackend: 'codex' })
+    await waitFor(() => expect(api.modelCapabilities).toHaveBeenCalledWith({ slot: 'pane-codex' }))
+  })
+
+  it('keeps the Kiro picker for a Kiro pane when the default is Codex', async () => {
     ;(api.kirocrewConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ agent: { acp_backend: 'codex' } })
     renderPane('pane-kiro', { acpBackend: '' })
     await waitFor(() => expect(document.querySelector('[title="Model: claude-opus-5"]')).toBeTruthy())
   })
 
-  it('hides Kiro controls for a Codex pane when the default is Kiro', async () => {
+  it('shows a Codex pane a picker when Codex reports one, not Kiro models', async () => {
+    // The behaviour change: a non-Kiro backend is no longer hidden on principle.
+    // It gets a picker when the server says it has a vocabulary — built from
+    // ITS list, fetched under its own backend key.
     ;(api.kirocrewConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ agent: { acp_backend: '' } })
+    ;(api.modelCapabilities as ReturnType<typeof vi.fn>).mockResolvedValue(
+      selectable({ backend: 'codex', catalog: 'advertised', registry_provider: '', reasoning_effort: false }),
+    )
+    ;(api.models as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { model_name: 'gpt-5.6-codex', description: 'Codex' },
+    ])
     renderPane('pane-codex', { acpBackend: 'codex' })
-    await waitFor(() => expect(document.querySelector('[title^="Model: "]')).toBeNull())
+    await waitFor(() => expect(api.models).toHaveBeenCalledWith('codex'))
+  })
+
+  it('hides the picker when the backend reports no selectable models', async () => {
+    // Truthfully absent rather than an empty dropdown, and the list is not even
+    // requested — an empty response reads as "degraded" and would be polled.
+    ;(api.modelCapabilities as ReturnType<typeof vi.fn>).mockResolvedValue(
+      selectable({ backend: 'codex', catalog: 'none', selectable: false, switch_scope: 'none', reasoning_effort: false }),
+    )
+    renderPane('pane-codex', { acpBackend: 'codex' })
+    await waitFor(() => expect(api.modelCapabilities).toHaveBeenCalled())
+    expect(document.querySelector('[title^="Model: "]')).toBeNull()
   })
 })
 
