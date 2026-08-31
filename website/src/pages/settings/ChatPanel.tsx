@@ -66,6 +66,9 @@ const COMPLETION_KEEP_OPTIONS: CompletionKeepMode[] = ['head', 'tail', 'both']
 type VerbosityLevel = 'default' | 'concise' | 'ultra' | 'answer_only'
 const VERBOSITY_OPTIONS: VerbosityLevel[] = ['default', 'concise', 'ultra', 'answer_only']
 
+type AcpBackend = '' | 'claude' | 'codex'
+const ACP_BACKEND_OPTIONS: AcpBackend[] = ['', 'claude', 'codex']
+
 /**
  * Narrow a persisted `dashboard.verbosity` to a level this Select can render.
  *
@@ -153,6 +156,7 @@ export function ChatPanel() {
     session?: { autocompact_pct?: number }
     session_summary?: { enabled?: boolean }
     agent?: {
+      acp_backend?: string
       model?: string
       role_models?: { background?: string; subagent?: string }
       role_efforts?: { background?: string; subagent?: string }
@@ -168,6 +172,26 @@ export function ChatPanel() {
     queryFn: () => api.kirocrewConfig(),
   })
   const mcCfg = mcQ.data
+
+  // The ACP process belongs to the session that created it. Persist the
+  // default immediately, but never replace a live session's process under an
+  // in-flight turn; the next new session reads this choice.
+  const configuredBackend = mcCfg?.agent?.acp_backend ?? ''
+  const acpBackend = configuredBackend
+  const backendOptions = ACP_BACKEND_OPTIONS.includes(acpBackend as AcpBackend)
+    ? [...ACP_BACKEND_OPTIONS]
+    : [...ACP_BACKEND_OPTIONS, acpBackend]
+  const unsupportedBackendLabel = i18nT('pages.settings.chatPanel.backend_external', { backend: acpBackend })
+  const backendLabels = [
+    i18nT('pages.settings.chatPanel.backend_kiro_cli'),
+    i18nT('pages.settings.chatPanel.backend_claude_code'),
+    i18nT('pages.settings.chatPanel.backend_codex'),
+  ]
+  const backendMut = useMutation({
+    mutationFn: (v: string) => api.patchConfig('agent.acp_backend', v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kirocrewConfig'] }),
+    onError: () => setSaveError(i18nT('pages.settings.chatPanel.failed_to_save_agent_backend')),
+  })
 
   // ── User profile (About You) ──
   // Same slugs as onboarding step 2 (OnboardingFlow.tsx), validated by the
@@ -414,11 +438,27 @@ export function ChatPanel() {
       )}
 
       <SettingsSection title={i18nT('pages.settings.chatPanel.model')}>
+        <SettingsCard>
+          <SettingsSelect
+            label={i18nT('pages.settings.chatPanel.agent_backend')}
+            description={i18nT('pages.settings.chatPanel.agent_backend_description')}
+            hint={i18nT('pages.settings.chatPanel.agent_backend_new_sessions_hint')}
+            value={acpBackend}
+            options={backendOptions}
+            optionLabels={backendOptions.map((_, index) =>
+              index < backendLabels.length ? backendLabels[index] : unsupportedBackendLabel
+            )}
+            onChange={v => backendMut.mutate(v)}
+            disabled={!mcQ.isSuccess || backendMut.isPending}
+            configKey="agent.acp_backend"
+          />
+        </SettingsCard>
+        {acpBackend === '' ? <>
         {/* Grouped by role so each block reads as "which model + how hard it
             thinks" for one kind of work, rather than six stacked selects.
             Chat is the interactive default; Background and Sub-agents inherit it
             when left on Auto. */}
-        <SettingsCard>
+        <SettingsCard index={1}>
           <div className="text-[13px] font-semibold text-text-strong">{i18nT('pages.settings.chatPanel.role_chat')}</div>
           <SettingsSelect
             label={i18nT('pages.settings.chatPanel.default_model')}
@@ -446,7 +486,7 @@ export function ChatPanel() {
           />
         </SettingsCard>
 
-        <SettingsCard index={1}>
+        <SettingsCard index={2}>
           <div className="text-[13px] font-semibold text-text-strong">{i18nT('pages.settings.chatPanel.role_background')}</div>
           <div className="text-[12px] text-muted -mt-0.5">{i18nT('pages.settings.chatPanel.model_for_background_lite_heartbeat_work')}</div>
           <SettingsSelect
@@ -469,7 +509,7 @@ export function ChatPanel() {
           />
         </SettingsCard>
 
-        <SettingsCard index={2}>
+        <SettingsCard index={3}>
           <div className="text-[13px] font-semibold text-text-strong">{i18nT('pages.settings.chatPanel.role_subagents')}</div>
           <div className="text-[12px] text-muted -mt-0.5">{i18nT('pages.settings.chatPanel.model_for_spawned_sub_agents')}</div>
           <SettingsSelect
@@ -492,7 +532,7 @@ export function ChatPanel() {
           />
         </SettingsCard>
 
-        <SettingsCard>
+        <SettingsCard index={4}>
           <div className="text-[13px] font-semibold text-text-strong">{i18nT('pages.settings.chatPanel.throttle_fallback')}</div>
           <div className="text-[12px] text-muted -mt-0.5">{i18nT('pages.settings.chatPanel.model_tried_when_your_current_model_stays_rate_li')}</div>
           <SettingsSelect
@@ -506,6 +546,18 @@ export function ChatPanel() {
             configKey="agent.fallback_model"
           />
         </SettingsCard>
+        </> : (
+          <SettingsCard index={1}>
+            <div className="text-[13px] font-semibold text-text-strong">
+              {ACP_BACKEND_OPTIONS.includes(acpBackend as AcpBackend)
+                ? backendLabels[ACP_BACKEND_OPTIONS.indexOf(acpBackend as AcpBackend)]
+                : unsupportedBackendLabel}
+            </div>
+            <div className="text-[12px] text-muted">
+              {i18nT('pages.settings.chatPanel.backend_models_not_exposed')}
+            </div>
+          </SettingsCard>
+        )}
       </SettingsSection>
 
       <SettingsSection title={i18nT('pages.settings.chatPanel.about_you')}>

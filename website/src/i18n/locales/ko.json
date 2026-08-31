@@ -11445,7 +11445,16 @@
         "which_model_new_sessions_start_with_pick_a_model": "에이전트가 모델을 고정하지 않았을 때 새 세션이 시작할 모델입니다. 에이전트 기능 → 에이전트에서 에이전트별로 모델을 설정하거나, 세션 안에서 모델을 선택해 재정의하세요.",
         "which_part_of_a_subagent_s_stream_to_keep_when_i": "서브에이전트의 완료 이벤트를 상위 세션에 삽입할 때 스트림의 어느 부분을 유지할지 결정합니다. ‘앞부분’은 스트림 시작을 유지합니다(기본값, 기존 동작과 동일). ‘끝부분’은 최종 요약을 유지합니다. ‘양쪽’은 양 끝에서 일부를 유지하고 그 사이에 표시를 넣습니다.",
         "widget_density": "위젯 밀도",
-        "your_role": "사용자 역할"
+        "your_role": "사용자 역할",
+        "agent_backend": "에이전트 백엔드",
+        "agent_backend_description": "대화를 시작할 때 사용할 ACP 에이전트를 선택하세요.",
+        "agent_backend_new_sessions_hint": "새 세션에 적용됩니다. 기존 세션은 현재 백엔드를 유지합니다.",
+        "backend_kiro_cli": "Kiro CLI",
+        "backend_claude_code": "Claude Code",
+        "backend_codex": "Codex",
+        "backend_models_not_exposed": "이 백엔드에서는 여기서 모델을 선택할 수 없습니다. Kiro 모델 설정은 이 백엔드를 제어하지 않으므로 숨겨집니다.",
+        "failed_to_save_agent_backend": "에이전트 백엔드를 저장하지 못했습니다",
+        "backend_external": "외부 백엔드 ({{backend}})"
       },
       "computerUsePanel": {
         "accessibility": "손쉬운 사용",

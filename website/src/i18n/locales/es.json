@@ -11778,7 +11778,16 @@
         "which_model_new_sessions_start_with_pick_a_model": "Con qué modelo empiezan las sesiones nuevas cuando su agente no tiene uno propio. Define un modelo por agente en Capacidades → Agentes, o elige uno dentro de una sesión para cambiarlo solo allí.",
         "which_part_of_a_subagent_s_stream_to_keep_when_i": "Qué parte del flujo de un subagente se conserva al inyectar su evento de finalización en la sesión principal. Inicio conserva el comienzo (predeterminado, igual que el comportamiento anterior). Cola conserva el resumen final. Ambos conserva un fragmento de cada extremo con un marcador entre ellos.",
         "widget_density": "Densidad de widgets",
-        "your_role": "Tu rol"
+        "your_role": "Tu rol",
+        "agent_backend": "Backend del agente",
+        "agent_backend_description": "Elige el agente ACP que se utilizará para iniciar conversaciones.",
+        "agent_backend_new_sessions_hint": "Se aplica a las sesiones nuevas. Las sesiones existentes conservan su backend actual.",
+        "backend_kiro_cli": "Kiro CLI",
+        "backend_claude_code": "Claude Code",
+        "backend_codex": "Codex",
+        "backend_models_not_exposed": "Este backend no ofrece selección de modelos aquí. La configuración de modelos de Kiro está oculta porque no controla este backend.",
+        "failed_to_save_agent_backend": "No se pudo guardar el backend del agente",
+        "backend_external": "Backend externo ({{backend}})"
       },
       "computerUsePanel": {
         "accessibility": "Accesibilidad",

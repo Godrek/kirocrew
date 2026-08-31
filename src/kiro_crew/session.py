@@ -464,6 +464,10 @@ class _RecycleCallback(Protocol):
     async def __call__(self, key: str, *, reason: str) -> None: ...  # noqa: E704
 
 
+class _ProviderUnboundCallback(Protocol):
+    def __call__(self, key: str) -> None: ...  # noqa: E704
+
+
 # Circuit breaker: force-reset after this many consecutive failures
 _CIRCUIT_BREAKER_THRESHOLD = 5
 
@@ -1055,6 +1059,7 @@ class SessionManager:
         self._background_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
         self._on_compacted: _CompactCallback | None = None
         self._on_recycled: _RecycleCallback | None = None
+        self._on_provider_unbound: _ProviderUnboundCallback | None = None
         self._pool_started = False
         self._session_map = SessionMap()
         # Continuable subagent conversations: session keys registered here
@@ -1220,6 +1225,7 @@ class SessionManager:
                 self._sessions.clear()
         # Shut down old sessions outside locks to avoid blocking
         for key, sess in stale:
+            self._fire_provider_unbound_callback(key)
             try:
                 await sess.provider.shutdown()
             except Exception:
@@ -1659,6 +1665,7 @@ class SessionManager:
                 del self._sessions[key]
                 dead = sess.provider
         if dead is not None:
+            self._fire_provider_unbound_callback(key)
             await asyncio.to_thread(_unlink_session_queue, sess)
             try:
                 await dead.shutdown()
@@ -3342,6 +3349,7 @@ class SessionManager:
             # Same tick as the pop — see the docstring.
             self._session_map.clear_sid(key)
         if session:
+            self._fire_provider_unbound_callback(key)
             await asyncio.to_thread(_unlink_session_queue, session)
             # Capture PID and child tree before shutdown clears them
             client = getattr(session.provider, "_client", None)
@@ -3578,6 +3586,25 @@ class SessionManager:
         if self._on_recycled is not None and cb is not None:
             logger.warning("Recycle callback already registered; replacing existing handler")
         self._on_recycled = cb
+
+    def set_provider_unbound_callback(self, cb: _ProviderUnboundCallback | None) -> None:
+        """Register a callback fired when a live provider leaves the manager.
+
+        The callback describes process lifetime, not resumability: the session
+        map may still retain a native sid, but the next acquisition is governed
+        by the current provider factory configuration.
+        """
+        if self._on_provider_unbound is not None and cb is not None:
+            logger.warning("Provider-unbound callback already registered; replacing handler")
+        self._on_provider_unbound = cb
+
+    def _fire_provider_unbound_callback(self, key: str) -> None:
+        if self._on_provider_unbound is None:
+            return
+        try:
+            self._on_provider_unbound(key)
+        except Exception:
+            logger.exception("Provider-unbound callback failed for %s", key)
 
     def _compaction_gate_decision(self, key: str, provider: LLMProvider, pct: float) -> str | None:
         """THE place that decides whether a compaction attempt may start.
@@ -3833,6 +3860,7 @@ class SessionManager:
                 await session.provider.shutdown()
                 logger.info("Recycled session %s (context overflow; entry already replaced)", key)
             else:
+                self._fire_provider_unbound_callback(key)
                 self._session_map.clear_sid(key)
                 await popped.provider.shutdown()
                 logger.info("Recycled session %s (context overflow; sid cleared)", key)
@@ -4178,6 +4206,7 @@ class SessionManager:
             self._compact_pending_verdict.pop(key, None)
             self._origin_links.pop(key, None)
         if session:
+            self._fire_provider_unbound_callback(key)
             await asyncio.to_thread(_unlink_session_queue, session)
             await session.provider.shutdown()
             # Reap any companion subagent runtime keyed by this parent (the
@@ -4296,6 +4325,7 @@ class SessionManager:
 
         retired: list[str] = []
         for key, provider in doomed:
+            self._fire_provider_unbound_callback(key)
             try:
                 await provider.shutdown()
                 # Mirrors remove(): a companion subagent runtime keyed by this
@@ -4504,6 +4534,7 @@ class SessionManager:
             self._compact_pending_verdict.pop(key, None)
             self._origin_links.pop(key, None)
         await asyncio.to_thread(_unlink_session_queue, session)
+        self._fire_provider_unbound_callback(key)
         await session.provider.shutdown()
         await self.release_subagent_runtime(key)
         logger.info("Removed unclaimed speculative session (map preserved): %s", key)
@@ -4523,6 +4554,7 @@ class SessionManager:
             self._compact_pending_verdict.pop(key, None)
         try:
             if session:
+                self._fire_provider_unbound_callback(key)
                 await asyncio.to_thread(_unlink_session_queue, session)
                 await session.provider.shutdown()
             # Reap any companion subagent runtime keyed by this parent (see remove()).
@@ -4575,6 +4607,7 @@ class SessionManager:
                 self._suppress_replay.add(key)
         try:
             if session:
+                self._fire_provider_unbound_callback(key)
                 await asyncio.to_thread(_unlink_session_queue, session)
                 await session.provider.shutdown()
             # Reap any companion subagent runtime keyed by this parent (see remove()).
@@ -4814,6 +4847,9 @@ class SessionManager:
             self._suppress_replay.clear()
             self._compact_pending_verdict.clear()
 
+        for key in sessions:
+            self._fire_provider_unbound_callback(key)
+
         # Bound concurrent shutdowns: each provider.shutdown() -> _kill_process()
         # enqueues 2-3 subprocess_executor tasks (child scan, record capture,
         # escaped-child sweep), several of which can block on a wedged kernel
@@ -5016,6 +5052,20 @@ class SessionManager:
     def conversation_provider(self, key: str) -> str:
         """Provider label persisted for *key* ("acp"/"claude_code" or "")."""
         return self._session_map.get_provider(self._fold_key(key))
+
+    def conversation_backend(self, key: str) -> str | None:
+        """Return the ACP backend of *key*'s currently live provider.
+
+        A persisted session-map label is resume compatibility metadata, not a
+        live binding: after teardown the next provider comes from current
+        configuration and may intentionally invalidate that old native sid.
+        """
+        provider = self.get_provider(key)
+        client = getattr(provider, "client", None) if provider is not None else None
+        backend = getattr(client, "backend", None)
+        if isinstance(backend, str):
+            return backend
+        return None
 
     def release(self, key: str, *, cleanup: bool = False) -> None:
         """Release the per-session semaphore acquired by ``get_or_create``.
@@ -5622,18 +5672,19 @@ class SessionManager:
     async def drain_all_providers(self) -> list:
         """Pop all sessions and return their providers. Thread-safe."""
         providers = []
-        popped: list["_Session"] = []
+        popped: list[tuple[str, "_Session"]] = []
         async with self._lock:
             keys = list(self._sessions.keys())
             for key in keys:
                 sess = self._sessions.pop(key, None)
                 if sess:
                     providers.append(sess.provider)
-                    popped.append(sess)
+                    popped.append((key, sess))
         # Unlink off the lock: a bulk drain (every gateway shutdown/restart)
         # can pop many sessions at once, and os.unlink is blocking I/O that
         # would otherwise stall every other coroutine waiting on self._lock.
-        for sess in popped:
+        for key, sess in popped:
+            self._fire_provider_unbound_callback(key)
             await asyncio.to_thread(_unlink_session_queue, sess)
         return providers
 

@@ -216,7 +216,11 @@ send time.
   later create/edit of the agent config would never be observed.
 - **Idle cleanup**: expires sessions after `session.timeout_secs` (default
   60min). Never expires `BACKGROUND_KEY`. Dashboard per-tab sessions
-  (`dashboard:{slot_key}`) idle-expire like any other session.
+  (`dashboard:{slot_key}`) idle-expire like any other session. A dashboard
+  slot's `acp_backend` describes only its currently live provider: every
+  provider teardown clears that binding, and gateway rehydration never restores
+  it from history or the resume map. Until the next provider is acquired the UI
+  falls back to the currently configured backend.
 - **Session Watchdog** (`watchdog.py`): the cleanup loop delegates its periodic
   behaviours to a `SessionWatchdog` — a stateless sequential dispatcher over
   named `CleanupHook(name, run)` entries (Command pattern; `tick()` isolates a

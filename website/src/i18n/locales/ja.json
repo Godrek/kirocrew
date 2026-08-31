@@ -11445,7 +11445,16 @@
         "which_model_new_sessions_start_with_pick_a_model": "エージェントがどれもピン留めしないときに新しいセッションが開始するモデル。エージェント機能 → エージェント でエージェントごとにモデルを設定するか、セッション内でそれをオーバーライドするモデルを選択します。",
         "which_part_of_a_subagent_s_stream_to_keep_when_i": "完了イベントを親セッションに注入するときにサブエージェントのストリームのどの部分を保持するか。「開始」はストリーム開始を保持します（デフォルト、レガシー動作と一致）。「終了」は最終要約を保持します。「両方」は各端からスライスを保持し、その間にマーカーがあります。",
         "widget_density": "ウィジェット密度",
-        "your_role": "あなたの役割"
+        "your_role": "あなたの役割",
+        "agent_backend": "エージェントのバックエンド",
+        "agent_backend_description": "会話の開始に使用する ACP エージェントを選択します。",
+        "agent_backend_new_sessions_hint": "新しいセッションに適用されます。既存のセッションでは現在のバックエンドが維持されます。",
+        "backend_kiro_cli": "Kiro CLI",
+        "backend_claude_code": "Claude Code",
+        "backend_codex": "Codex",
+        "backend_models_not_exposed": "このバックエンドでは、ここでモデルを選択できません。Kiro のモデル設定はこのバックエンドを制御しないため非表示になります。",
+        "failed_to_save_agent_backend": "エージェントのバックエンドを保存できませんでした",
+        "backend_external": "外部バックエンド ({{backend}})"
       },
       "computerUsePanel": {
         "accessibility": "アクセシビリティ",

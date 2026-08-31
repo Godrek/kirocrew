@@ -5204,6 +5204,9 @@ async def _run_chat(
             reasoning_effort_override=slot.reasoning_effort or None,
         )
         _acquired = True
+        # Bind the slot to the provider that actually owns this session. The
+        # configured backend is only a default for future sessions.
+        slot.acp_backend = state.sessions.conversation_backend(session_key)
         # Member activity pointer — once per SESSION, not per turn: the log
         # answers "which sessions did this member take part in", so a per-turn
         # append would inflate every count taken from it. `slot.agent` is the

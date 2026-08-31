@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,6 +17,11 @@ def _make_app() -> web.Application:
 
     app = web.Application()
     app.router.add_patch("/api/config/kirocrew", api_kirocrew_config_patch)
+    app["state"] = SimpleNamespace(
+        sessions=SimpleNamespace(refresh_defaults=AsyncMock(), reload_provider_factory=AsyncMock()),
+        _slots={},
+        push_slots_update=MagicMock(),
+    )
     return app
 
 
@@ -205,6 +211,24 @@ class TestPatchGeneral:
 
 
 class TestEnumValidator:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", ["", "claude", "codex"])
+    async def test_acp_backend_valid_values_are_written(self, tmp_config, value) -> None:
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "agent.acp_backend", value)
+            assert resp.status == 200
+        data = json.loads(tmp_config.read_text(encoding="utf-8"))
+        assert data["agent"]["acp_backend"] == value
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", ["kiro", "kas", "openai", 1, None])
+    async def test_acp_backend_invalid_values_are_rejected(self, tmp_config, value) -> None:
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "agent.acp_backend", value)
+            assert resp.status == 400
+        data = json.loads(tmp_config.read_text(encoding="utf-8"))
+        assert "acp_backend" not in data["agent"]
+
     @pytest.mark.asyncio
     async def test_valid_enum_passes(self, tmp_config) -> None:
         async with TestClient(TestServer(_make_app())) as c:
@@ -646,6 +670,65 @@ class TestDefaultModelPatch:
         app, _ = _make_app_with_sessions()
         async with TestClient(TestServer(app)) as c:
             assert (await _patch(c, "agent.model", 42)).status == 400
+
+
+class TestAcpBackendHotReload:
+    @pytest.mark.asyncio
+    async def test_patch_refreshes_new_sessions_without_restarting_existing_session(
+        self, tmp_config
+    ) -> None:
+        """PATCH A→B preserves live A, drains pooled A, and creates new B."""
+        from kiro_crew.session import SessionManager
+
+        def provider(backend: str) -> MagicMock:
+            value = MagicMock()
+            value.client = SimpleNamespace(backend=backend)
+            value._client = None
+            value.start = AsyncMock()
+            value.shutdown = AsyncMock()
+            value.is_process_alive = MagicMock(return_value=True)
+            value.exit_code = None
+            value.cwd = ""
+            return value
+
+        cfg_a = MagicMock()
+        cfg_a.session.pool_size = 1
+        cfg_a.session.pool_agent = "kirocrew"
+        cfg_a.session.pool_ttl_secs = 1800
+        cfg_a.session.timeout_secs = 3600
+        cfg_a.agent.default_agent = ""
+        cfg_a.agent.model = "auto"
+        cfg_a.agent.reasoning_effort = ""
+        factory_a = MagicMock(side_effect=lambda *args, **kwargs: provider("codex"))
+        manager = SessionManager(cfg_a, provider_factory=factory_a)
+        manager.start_pool = AsyncMock()
+
+        existing, _, _ = await manager.get_or_create("dashboard:existing")
+        manager.release("dashboard:existing")
+        stale_pooled = provider("codex")
+        stale_pooled.is_process_alive.return_value = False
+        manager._warm_pool.put_nowait((stale_pooled, time.monotonic()))
+
+        factory_b = MagicMock(side_effect=lambda *args, **kwargs: provider("claude"))
+
+        app = _make_app()
+        app["state"] = SimpleNamespace(sessions=manager)
+        with (patch("kiro_crew.session.build_provider_factory", return_value=factory_b),):
+            async with TestClient(TestServer(app)) as client:
+                response = await _patch(client, "agent.acp_backend", "claude")
+                assert response.status == 200
+
+        assert manager.get_provider("dashboard:existing") is existing
+        assert existing.client.backend == "codex"
+        existing.shutdown.assert_not_awaited()
+        stale_pooled.shutdown.assert_awaited_once()
+        assert manager._warm_pool.empty()
+        manager.start_pool.assert_awaited_once_with(blocking=False)
+
+        new_provider, _, _ = await manager.get_or_create("dashboard:new")
+        assert new_provider.client.backend == "claude"
+        manager.release("dashboard:new")
+        factory_b.assert_called()
 
 
 class TestDefaultReasoningEffortPatch:

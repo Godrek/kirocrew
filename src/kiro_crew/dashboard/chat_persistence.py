@@ -849,6 +849,9 @@ def _rehydrate_slot_from_history(
                 slot.model = kiro_model_map.get(kiro_name, "")
             except Exception:
                 logger.debug("Failed to resolve model for rehydrated slot %s", slot_name, exc_info=True)
+        # Backend identity is live-provider state. History and the resume map
+        # may name a provider that no longer exists; leave the slot unbound so
+        # the frontend falls back to the configured backend for next acquisition.
         if meta.get("reasoning_effort"):
             slot.reasoning_effort = _validate_reasoning_effort(meta["reasoning_effort"])
         if meta.get("workspace"):
@@ -1284,6 +1287,8 @@ def _apply_recent_session(
             logger.debug(
                 "Failed to resolve model for restored slot %s", slot_name, exc_info=True
             )
+    # Backend identity is not restored: no live provider exists for this newly
+    # rehydrated slot, regardless of the backend recorded by its prior process.
     if meta.get("reasoning_effort"):
         slot.reasoning_effort = _validate_reasoning_effort(meta["reasoning_effort"])
     if meta.get("workspace"):
@@ -2448,6 +2453,8 @@ def _save_slot_to_history(
             if slot.agent:
                 meta_line["agent"] = slot.agent
             meta_line["model"] = slot.model
+            if slot.acp_backend is not None:
+                meta_line["acp_backend"] = slot.acp_backend
             if slot.reasoning_effort:
                 meta_line["reasoning_effort"] = slot.reasoning_effort
             if slot.mode:
