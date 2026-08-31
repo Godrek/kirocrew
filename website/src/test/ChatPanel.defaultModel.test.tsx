@@ -139,6 +139,49 @@ describe('ChatPanel — default model', () => {
   })
 })
 
+describe('ChatPanel — ACP backend', () => {
+  beforeEach(() => {
+    patchConfigMock.mockClear()
+  })
+
+  it('renders Codex as selected and hides Kiro model controls', async () => {
+    seed({ acp_backend: 'codex', model: 'claude-opus-4.8' })
+    wrap(<ChatPanel />)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Agent backend' })).toHaveTextContent('Codex'))
+    expect(screen.queryByRole('combobox', { name: 'Default Model' })).not.toBeInTheDocument()
+    expect(screen.queryByText('claude-opus-4.8')).not.toBeInTheDocument()
+  })
+
+  it('renders Claude Code as selected and hides Kiro model controls', async () => {
+    seed({ acp_backend: 'claude', model: 'claude-opus-4.8' })
+    wrap(<ChatPanel />)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Agent backend' })).toHaveTextContent('Claude Code'))
+    expect(screen.queryByRole('combobox', { name: 'Default Model' })).not.toBeInTheDocument()
+  })
+
+  it('preserves Kiro model selection for the Kiro backend', async () => {
+    seed({ acp_backend: '', model: 'claude-opus-4.8', reasoning_effort: '' })
+    wrap(<ChatPanel />)
+    expect(await screen.findByRole('combobox', { name: 'Agent backend' })).toHaveTextContent('Kiro CLI')
+    expect(await screen.findByRole('combobox', { name: 'Default Model' })).toHaveTextContent('claude-opus-4.8')
+  })
+
+  it('renders an unsupported persisted backend truthfully and hides Kiro models', async () => {
+    seed({ acp_backend: 'kas', model: 'claude-opus-4.8' })
+    wrap(<ChatPanel />)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Agent backend' })).toHaveTextContent('External backend (kas)'))
+    expect(screen.queryByRole('combobox', { name: 'Default Model' })).not.toBeInTheDocument()
+  })
+
+  it('writes the selected backend through agent.acp_backend', async () => {
+    seed({ acp_backend: '', model: 'auto' })
+    wrap(<ChatPanel />)
+    await openSelect('Agent backend')
+    fireEvent.click(screen.getByRole('option', { name: 'Codex' }))
+    await waitFor(() => expect(patchConfigMock).toHaveBeenCalledWith('agent.acp_backend', 'codex'))
+  })
+})
+
 describe('ChatPanel — default reasoning effort', () => {
   beforeEach(() => {
     patchConfigMock.mockClear()

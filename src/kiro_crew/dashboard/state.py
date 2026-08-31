@@ -2655,6 +2655,7 @@ class _ChatSlot:
         "title",
         "agent",
         "model",
+        "acp_backend",
         "reasoning_effort",
         "mode",
         "workspace",
@@ -2811,6 +2812,11 @@ class _ChatSlot:
         self.title = title or key
         self.agent = agent
         self.model = model
+        # Actual ACP backend bound to this conversation. None means the slot
+        # has not acquired a provider yet; "" is the real Kiro backend id.
+        # Once populated this follows the session, not the configurable default
+        # used when future sessions are created.
+        self.acp_backend: str | None = None
         # Reasoning effort: "" = provider default, else one of low/medium/high/max.
         # Currently consumed by an alternate ACP backend (--effort flag); ACP wired later.
         self.reasoning_effort: str = ""
@@ -4640,6 +4646,7 @@ class _ChatSlot:
             # `config.loader.resolve_effective_agent`.
             "effective_agent": resolve_effective_agent(self.agent, self.project or None),
             "model": self.model,
+            "acp_backend": self.acp_backend,
             "reasoning_effort": self.reasoning_effort,
             "mode": self.mode,
             # Forward-compat alias of `mode` for the frontend's surface
@@ -5391,6 +5398,18 @@ class DashboardState:
                 )
 
         self.sessions.set_recycle_callback(_on_recycled)
+
+        def _on_provider_unbound(key: str) -> None:
+            from kiro_crew.dashboard.chat_utils import dashboard_slot_key
+
+            slot_key = dashboard_slot_key(key)
+            slot = self.get_slot(slot_key) if slot_key else None
+            if slot is None:
+                return
+            slot.acp_backend = None
+            self.push_slots_update()
+
+        self.sessions.set_provider_unbound_callback(_on_provider_unbound)
 
         def _on_stuck_turn(key: str, parked_secs: float) -> None:
             """Surface a stuck turn in the chat where it is happening.

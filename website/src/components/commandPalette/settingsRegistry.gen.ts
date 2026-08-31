@@ -795,6 +795,16 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     }
   },
   {
+    "id": "chat.agent-backend",
+    "label": "Agent backend",
+    "labelKey": "pages.settings.chatPanel.agent_backend",
+    "description": "Choose the ACP agent used to start conversations.",
+    "tab": "chat",
+    "type": "select",
+    "occurrence": 1,
+    "configKey": "agent.acp_backend"
+  },
+  {
     "id": "chat.auto-compact-threshold",
     "label": "Auto-Compact Threshold",
     "labelKey": "pages.settings.chatPanel.auto_compact_threshold",

@@ -11445,7 +11445,16 @@
         "which_model_new_sessions_start_with_pick_a_model": "代理未指定模型时，新会话默认使用的模型。可在“代理能力 → 代理”中为每个代理单独设置模型，或在会话内选择模型以就地覆盖。",
         "which_part_of_a_subagent_s_stream_to_keep_when_i": "将子代理的完成事件注入父会话时，保留其输出流的哪一部分。头部保留开头（默认，与旧行为一致）。尾部保留最终摘要。两端则各保留一段，中间加分隔标记。",
         "widget_density": "小组件密度",
-        "your_role": "你的角色"
+        "your_role": "你的角色",
+        "agent_backend": "代理后端",
+        "agent_backend_description": "选择用于开始对话的 ACP 代理。",
+        "agent_backend_new_sessions_hint": "应用于新会话。现有会话将保留当前后端。",
+        "backend_kiro_cli": "Kiro CLI",
+        "backend_claude_code": "Claude Code",
+        "backend_codex": "Codex",
+        "backend_models_not_exposed": "此后端不在这里提供模型选择。Kiro 模型设置将被隐藏，因为它们无法控制此后端。",
+        "failed_to_save_agent_backend": "无法保存代理后端",
+        "backend_external": "外部后端 ({{backend}})"
       },
       "computerUsePanel": {
         "accessibility": "辅助功能",

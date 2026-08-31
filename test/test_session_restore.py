@@ -103,6 +103,28 @@ class TestRestoreRecentSessions:
         assert slot._dirty is False
         assert slot._resumed_count == 2
 
+    @pytest.mark.parametrize(
+        ("persisted_backend", "configured_backend"),
+        [("", "codex"), ("codex", "")],
+    )
+    def test_restart_does_not_restore_stale_backend_binding(
+        self, tmp_path, monkeypatch, persisted_backend, configured_backend
+    ):
+        """History backend is process state, not a conversation pin."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        _write_session(
+            tmp_path,
+            "dashboard_backend-switch",
+            [{"role": "user", "content": "hello", "ts": "2026-03-23T10:00:00"}],
+            meta={"acp_backend": persisted_backend},
+        )
+        (tmp_path / "dashboard_backend-switch.jsonl").touch()
+        state = _make_state(tmp_path)
+        state.sessions.conversation_backend.return_value = configured_backend
+
+        assert restore_recent_sessions(state, window_minutes=60) == 1
+        assert state._slots["backend-switch"].acp_backend is None
+
     def test_restores_mode_empty_by_default(self, tmp_path, monkeypatch):
         """Sessions without mode in metadata default to empty string."""
         monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
@@ -809,6 +831,29 @@ class TestRehydrateSlotFromHistory:
         # No double-registration
         assert state._slots["hot-slot"] is existing
         assert existing.title == "Original Title"
+
+    @pytest.mark.parametrize(
+        ("persisted_backend", "configured_backend"),
+        [("", "codex"), ("codex", "")],
+    )
+    def test_on_demand_rehydrate_does_not_restore_stale_backend_binding(
+        self, tmp_path, monkeypatch, persisted_backend, configured_backend
+    ):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        _write_session(
+            tmp_path,
+            "dashboard_backend-rehydrate",
+            [{"role": "user", "content": "hello", "ts": "2026-03-23T10:00:00"}],
+            meta={"acp_backend": persisted_backend},
+        )
+        from kiro_crew.dashboard.chat import _rehydrate_slot_from_history
+
+        state = _make_state(tmp_path)
+        state.sessions.conversation_backend.return_value = configured_backend
+        slot = _rehydrate_slot_from_history(state, "backend-rehydrate")
+
+        assert slot is not None
+        assert slot.acp_backend is None
 
     def test_rehydrates_slot_with_metadata_and_messages(self, tmp_path, monkeypatch):
         """Rehydrate restores title, agent, model, memory_mode and message history

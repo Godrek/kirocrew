@@ -33,7 +33,7 @@ const MODELS = [
 ]
 
 /** Flipped per-scenario: the persisted config the Settings panel reads back. */
-const scene = { model: 'auto', effort: '', theme: 'dark' }
+const scene = { backend: '', model: 'auto', effort: '', theme: 'dark' }
 
 const slots = [{
   key: SLOT,
@@ -83,6 +83,7 @@ async function main() {
     // The PATCH the two selects issue — echo success and let the panel refetch.
     if (path === '/api/config/kirocrew' && method === 'PATCH') {
       const body = JSON.parse(route.request().postData() || '{}')
+      if (body.path === 'agent.acp_backend') scene.backend = body.value
       if (body.path === 'agent.model') scene.model = body.value
       if (body.path === 'agent.reasoning_effort') scene.effort = body.value
       return json(route, { ok: true })
@@ -90,6 +91,7 @@ async function main() {
     if (path === '/api/config/kirocrew') {
       return json(route, {
         agent: {
+          acp_backend: scene.backend,
           model: scene.model,
           reasoning_effort: scene.effort,
           completion_keep: 'head',
@@ -245,13 +247,22 @@ async function main() {
   await page.waitForTimeout(350)
   await card('08-deeplink-highlight-dark', 26)
 
-  // 7. Light-theme parity.
+  // 7. Codex state: settings identify the active backend and the live chat
+  //    composer does not expose Kiro's model affordance.
+  scene.backend = 'codex'
+  await load('/settings?tab=chat')
+  await shot('09-settings-chat-codex-dark')
+  await load('/')
+  await shot('10-chat-codex-no-kiro-model-dark')
+  scene.backend = ''
+
+  // 8. Light-theme parity.
   await load('/settings?tab=chat', 'light')
-  await card('09-model-card-opus-light')
+  await card('11-model-card-opus-light')
 
   scene.model = 'auto'; scene.effort = ''
   await load('/settings?tab=chat', 'light')
-  await card('10-model-card-auto-light')
+  await card('12-model-card-auto-light')
 
   await browser.close()
   srv.close()

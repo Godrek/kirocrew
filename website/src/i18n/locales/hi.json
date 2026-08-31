@@ -11612,7 +11612,16 @@
         "which_model_new_sessions_start_with_pick_a_model": "जब किसी एजेंट का अपना कोई मॉडल तय न हो, तो नए सेशन किस मॉडल से शुरू होते हैं। हर एजेंट के लिए मॉडल क्षमताएँ → एजेंट में सेट करो, या किसी सेशन के भीतर मॉडल चुनकर वहाँ इसे बदल दो।",
         "which_part_of_a_subagent_s_stream_to_keep_when_i": "पैरेंट सेशन में सबएजेंट का कंप्लीशन इवेंट डालते समय उसकी स्ट्रीम का कौन-सा हिस्सा रखा जाए। Head शुरुआत को बनाए रखता है (डिफ़ॉल्ट, पुराने व्यवहार के अनुरूप)। Tail अंतिम सारांश को बनाए रखता है। Both दोनों सिरों से एक-एक हिस्सा रखता है और उनके बीच एक मार्कर लगाता है।",
         "widget_density": "विजेट घनत्व",
-        "your_role": "आपकी भूमिका"
+        "your_role": "आपकी भूमिका",
+        "agent_backend": "एजेंट बैकएंड",
+        "agent_backend_description": "बातचीत शुरू करने के लिए उपयोग किए जाने वाले ACP एजेंट को चुनें।",
+        "agent_backend_new_sessions_hint": "नई सेशन पर लागू होता है। मौजूदा सेशन अपना वर्तमान बैकएंड बनाए रखते हैं।",
+        "backend_kiro_cli": "Kiro CLI",
+        "backend_claude_code": "Claude Code",
+        "backend_codex": "Codex",
+        "backend_models_not_exposed": "यह बैकएंड यहाँ मॉडल चयन उपलब्ध नहीं कराता। Kiro मॉडल सेटिंग छिपी हैं क्योंकि वे इस बैकएंड को नियंत्रित नहीं करतीं।",
+        "failed_to_save_agent_backend": "एजेंट बैकएंड सहेजा नहीं जा सका",
+        "backend_external": "बाहरी बैकएंड ({{backend}})"
       },
       "computerUsePanel": {
         "accessibility": "सुगम्यता",

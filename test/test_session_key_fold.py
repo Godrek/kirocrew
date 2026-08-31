@@ -49,6 +49,25 @@ def cfg():
     return KiroCrewConfig()
 
 
+class TestSessionBackendIdentity:
+    def test_live_provider_backend_is_authoritative(self, cfg) -> None:
+        mgr = SessionManager(cfg, provider_factory=_alive_provider_factory())
+        provider = AsyncMock()
+        provider.client.backend = "codex"
+        mgr.get_provider = lambda _key: provider  # type: ignore[method-assign]
+        mgr.conversation_provider = lambda _key: "acp"  # type: ignore[method-assign]
+
+        assert mgr.conversation_backend("dashboard:slot") == "codex"
+
+    @pytest.mark.parametrize("label", ["acp", "claude_code", "codex", "kas"])
+    def test_persisted_provider_label_is_not_a_live_backend(self, cfg, label: str) -> None:
+        mgr = SessionManager(cfg, provider_factory=_alive_provider_factory())
+        mgr.get_provider = lambda _key: None  # type: ignore[method-assign]
+        mgr.conversation_provider = lambda _key: label  # type: ignore[method-assign]
+
+        assert mgr.conversation_backend("dashboard:slot") is None
+
+
 class TestFoldKey:
     """_fold_key resolves bare/canonical Slack aliases onto the live entry."""
 

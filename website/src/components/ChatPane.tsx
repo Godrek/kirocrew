@@ -204,6 +204,13 @@ export default function ChatPane({
   }, [dispatch])
   const agentDD = useFilteredDropdown(installedAgents)
   const availableModels = useAvailableModels()
+  const { data: acpBackend = '' } = useQuery<{ agent?: { acp_backend?: string } }, Error, string>({
+    queryKey: ['kirocrewConfig'],
+    queryFn: () => api.kirocrewConfig(),
+    select: config => config.agent?.acp_backend ?? '',
+  })
+  // Split panes can show sessions created under different defaults.
+  const usesKiroModelPicker = (paneSlot?.acp_backend ?? acpBackend) === ''
   const modelDD = useFilteredDropdown(availableModels)
   // See ChatPage: display what will actually run, not a pin the account lost
   // access to. The degraded flag gates it — a cached list served while
@@ -759,7 +766,7 @@ export default function ChatPane({
           contextUsedTokens={contextTokens?.used}
           contextWindowTokens={contextTokens?.window || provider.getContextWindow(shownModel)}
           onAgentClick={provider.capabilities.agentTemplates ? (rect) => { setAgentBtnRect(rect); agentDD.setOpen(!agentDD.open) } : undefined}
-          onModelClick={(rect) => { setModelBtnRect(rect); modelDD.setOpen(!modelDD.open) }}
+          onModelClick={usesKiroModelPicker ? (rect) => { setModelBtnRect(rect); modelDD.setOpen(!modelDD.open) } : undefined}
           approvalMode={displayMode}
           followUpOptions={followUpOptions}
           followUpPicked={followUpPicked}
@@ -879,7 +886,7 @@ export default function ChatPane({
         )}
 
         {/* Model picker portal — anchored to the input-bar model button. */}
-        {modelDD.open && modelBtnRect && createPortal(
+        {usesKiroModelPicker && modelDD.open && modelBtnRect && createPortal(
           /* The labeled dialog owns roving-focus key handling for its descendants. */
           // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
           <div

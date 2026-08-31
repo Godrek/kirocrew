@@ -43,7 +43,9 @@ jobs:
     # Same-repo PRs only (not forks): fork PRs have no OIDC/secrets access, and
     # this keeps budget abuse / prompt-injection / secret-exfil out — mirrors
     # the fork guard in design-review.yml / codex-review.yml.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event.repository.fork == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
     steps:
       # persist-credentials:false stops actions/checkout from writing the
       # GITHUB_TOKEN into .git/config, where the agentic reviewer — which reads

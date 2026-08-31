@@ -261,6 +261,16 @@ class TestSlotModel:
         slot = state.get_or_create_slot("test-2")
         assert slot.model == ""
 
+    def test_acp_backend_in_to_dict_distinguishes_unknown_from_kiro(
+        self, state: DashboardState
+    ) -> None:
+        slot = state.get_or_create_slot("test-backend")
+        assert slot.to_dict()["acp_backend"] is None
+        slot.acp_backend = ""
+        assert slot.to_dict()["acp_backend"] == ""
+        slot.acp_backend = "codex"
+        assert slot.to_dict()["acp_backend"] == "codex"
+
 
 class TestSlotEffectiveAgent:
     """`to_dict()["effective_agent"]` — the non-destructive divergence report.
@@ -612,6 +622,22 @@ class TestCompactCallbackWiring:
         state.sessions.set_compact_callback.assert_called_once()
         cb = state.sessions.set_compact_callback.call_args[0][0]
         assert callable(cb)
+
+    @pytest.mark.parametrize("bound_backend", ["", "codex"])
+    def test_provider_teardown_clears_live_backend_binding(
+        self, state: DashboardState, bound_backend: str
+    ) -> None:
+        """Kiro→Codex and Codex→Kiro both fall back after provider teardown."""
+        slot = state.get_or_create_slot("chat-1")
+        slot.acp_backend = bound_backend
+        state.push_slots_update = MagicMock()  # type: ignore[method-assign]
+
+        state.wire_session_recycle_callback()
+        callback = state.sessions.set_provider_unbound_callback.call_args.args[0]
+        callback("dashboard:chat-1")
+
+        assert slot.acp_backend is None
+        state.push_slots_update.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_callback_ignores_non_dashboard_keys(self, state: DashboardState) -> None:

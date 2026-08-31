@@ -7538,7 +7538,16 @@
         "which_model_new_sessions_start_with_pick_a_model": "Which model new sessions start with when their agent pins none. Set a model per agent under Capabilities → Agents, or pick one inside a session to override it there.",
         "which_part_of_a_subagent_s_stream_to_keep_when_i": "Which part of a subagent's stream to keep when injecting its completion event into the parent session. Head preserves the start (default, matches legacy behavior). Tail preserves the final summary. Both keeps a slice from each end with a marker between them.",
         "widget_density": "Widget Density",
-        "your_role": "Your Role"
+        "your_role": "Your Role",
+        "agent_backend": "Agent backend",
+        "agent_backend_description": "Choose the ACP agent used to start conversations.",
+        "agent_backend_new_sessions_hint": "Applies to new sessions. Existing sessions keep their current backend.",
+        "backend_kiro_cli": "Kiro CLI",
+        "backend_claude_code": "Claude Code",
+        "backend_codex": "Codex",
+        "backend_models_not_exposed": "This backend does not expose model selection here. Kiro model settings are hidden because they do not control this backend.",
+        "failed_to_save_agent_backend": "Failed to save agent backend",
+        "backend_external": "External backend ({{backend}})"
       },
       "computerUsePanel": {
         "accessibility": "Accessibility",

@@ -31,6 +31,9 @@ import type { RootState } from '../store'
 // resolves to, and what would clobber an explicit Auto pick. Repeated as a
 // literal inside the vi.mock factory below, which is hoisted above this const.
 const AGENT_MODEL = 'claude-opus-5'
+const { kirocrewConfigMock } = vi.hoisted(() => ({
+  kirocrewConfigMock: vi.fn().mockResolvedValue({ agent: { acp_backend: '' } }),
+}))
 
 interface VirtuosoMockProps {
   data?: unknown[]
@@ -40,6 +43,7 @@ vi.mock('react-virtuoso', () => ({ Virtuoso: ({ data, itemContent }: VirtuosoMoc
 vi.mock('../api/client', () => ({
   api: {
     chatSlots: vi.fn().mockResolvedValue([]),
+    kirocrewConfig: kirocrewConfigMock,
     chatSlotDetail: vi.fn().mockResolvedValue({ messages: [], running: false, has_more: false, total: 0 }),
     chatHistory: vi.fn().mockResolvedValue({ sessions: [] }),
     models: vi.fn().mockResolvedValue([
@@ -78,13 +82,13 @@ import ChatPage from '../pages/ChatPage'
 
 /** `model` is deliberately optional so a test can render the legacy "never
  *  chosen" slot (no model key at all) as well as an explicit pick. */
-function makeStore(model?: string) {
+function makeStore(model?: string, acpBackend?: string) {
   return configureStore({
     reducer: { dashboard: dashboardReducer, chat: chatReducer, notifications: notificationsReducer },
     preloadedState: {
       dashboard: {
         status: null,
-        slots: [{ key: 'slot-a', messages: 0, running: false, mode: '', agent: 'kirocrew', model, pending_approval: false, waiting_for_input: false, last_activity_ts: undefined }],
+        slots: [{ key: 'slot-a', messages: 0, running: false, mode: '', agent: 'kirocrew', model, acp_backend: acpBackend, pending_approval: false, waiting_for_input: false, last_activity_ts: undefined }],
         unreadSlots: [], refreshTrigger: 0, approvalMode: 'normal',
         subagentRunning: {}, subagentDetails: {}, subagentText: {},
       } as unknown as RootState['dashboard'],
@@ -103,12 +107,12 @@ function makeStore(model?: string) {
   })
 }
 
-async function renderChat(model?: string) {
+async function renderChat(model?: string, acpBackend?: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   await act(async () => {
     render(
       <QueryClientProvider client={qc}>
-        <Provider store={makeStore(model)}>
+        <Provider store={makeStore(model, acpBackend)}>
           <ThemeProvider>
             <MemoryRouter><ChatPage /></MemoryRouter>
           </ThemeProvider>
@@ -130,6 +134,7 @@ beforeEach(() => {
   sessionStorage.clear()
   localStorage.clear()
   vi.clearAllMocks()
+  kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: '' } })
 })
 
 describe('ChatPage — Auto model selection', { timeout: 15_000 }, () => {
@@ -153,6 +158,19 @@ describe('ChatPage — Auto model selection', { timeout: 15_000 }, () => {
     await openModelPicker()
     const autoOption = await waitFor(() => screen.getByRole('option', { name: /auto/ }))
     expect(autoOption.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('keeps Kiro controls for a Kiro session when the new-session default is Codex', async () => {
+    kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: 'codex' } })
+    await renderChat(AGENT_MODEL, '')
+    expect(await waitFor(() => screen.getByTitle(`Model: ${AGENT_MODEL}`))).toBeTruthy()
+  })
+
+  it('hides Kiro controls for a Codex session when the new-session default is Kiro', async () => {
+    kirocrewConfigMock.mockResolvedValue({ agent: { acp_backend: '' } })
+    await renderChat(AGENT_MODEL, 'codex')
+    await waitFor(() => expect(screen.queryByTitle(/^Model: /)).toBeNull())
+    expect(screen.queryByRole('option', { name: /claude-opus-5/ })).toBeNull()
   })
 
   it('still inherits the resolved default when no model was ever chosen', async () => {

@@ -11611,7 +11611,16 @@
         "which_model_new_sessions_start_with_pick_a_model": "Mit welchem Modell neue Sitzungen starten, wenn ihr Agent keines festlegt. Lege pro Agent unter Agenten-Fähigkeiten → Agenten ein Modell fest oder wähle innerhalb einer Sitzung eines, um es dort zu übersteuern.",
         "which_part_of_a_subagent_s_stream_to_keep_when_i": "Welcher Teil des Streams eines Subagenten beim Einfügen seines Abschlussereignisses in die übergeordnete Sitzung erhalten bleibt. „Kopf“ bewahrt den Anfang (Standard, entspricht dem Legacy-Verhalten). „Ende“ bewahrt die abschließende Zusammenfassung. „Beides“ behält einen Abschnitt von jedem Ende mit einer Markierung dazwischen.",
         "widget_density": "Widget-Dichte",
-        "your_role": "Ihre Rolle"
+        "your_role": "Ihre Rolle",
+        "agent_backend": "Agenten-Backend",
+        "agent_backend_description": "Wählen Sie den ACP-Agenten aus, der zum Starten von Unterhaltungen verwendet wird.",
+        "agent_backend_new_sessions_hint": "Gilt für neue Sitzungen. Bestehende Sitzungen behalten ihr aktuelles Backend.",
+        "backend_kiro_cli": "Kiro CLI",
+        "backend_claude_code": "Claude Code",
+        "backend_codex": "Codex",
+        "backend_models_not_exposed": "Dieses Backend bietet hier keine Modellauswahl an. Die Kiro-Modelleinstellungen sind ausgeblendet, da sie dieses Backend nicht steuern.",
+        "failed_to_save_agent_backend": "Agenten-Backend konnte nicht gespeichert werden",
+        "backend_external": "Externes Backend ({{backend}})"
       },
       "computerUsePanel": {
         "accessibility": "Bedienungshilfen",

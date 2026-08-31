@@ -25,10 +25,11 @@ vi.mock('react-virtuoso', () => ({
 vi.mock('../api/client', () => ({
   api: {
     chatSlots: vi.fn().mockResolvedValue([]),
+    kirocrewConfig: vi.fn().mockResolvedValue({ agent: { acp_backend: '' } }),
     chatSlotDetail: vi.fn().mockResolvedValue({ messages: [], running: false, has_more: false, total: 0 }),
     sendChat: vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: true }) }),
     chatHistory: vi.fn().mockResolvedValue({ sessions: [] }),
-    models: vi.fn().mockResolvedValue([]),
+    models: vi.fn().mockResolvedValue([{ model_name: 'claude-opus-5', description: 'Claude Opus 5' }]),
     agents: vi.fn().mockResolvedValue([]),
     agentDetail: vi.fn().mockResolvedValue({}),
     workspaces: vi.fn().mockResolvedValue({ workspaces: [] }),
@@ -53,13 +54,13 @@ Object.defineProperty(window, 'matchMedia', {
 import ChatPane from '../components/ChatPane'
 import { api } from '../api/client'
 
-function makeStore(slotKey: string, activeSlot?: string, messages: unknown[] = [], running = false) {
+function makeStore(slotKey: string, activeSlot?: string, messages: unknown[] = [], running = false, acpBackend?: string) {
   return configureStore({
     reducer: { dashboard: dashboardReducer, chat: chatReducer, notifications: notificationsReducer },
     preloadedState: {
       dashboard: {
         status: null, connected: true,
-        slots: [{ key: slotKey, messages: 0, running, mode: '', pending_approval: false, waiting_for_input: false, last_activity_ts: undefined }],
+        slots: [{ key: slotKey, messages: 0, running, mode: '', model: 'claude-opus-5', acp_backend: acpBackend, pending_approval: false, waiting_for_input: false, last_activity_ts: undefined }],
         slotsLoaded: true,
         unreadSlots: [], refreshTrigger: 0, approvalMode: 'normal',
         subagentRunning: {}, subagentDetails: {}, subagentText: {},
@@ -71,9 +72,9 @@ function makeStore(slotKey: string, activeSlot?: string, messages: unknown[] = [
   })
 }
 
-function renderPane(slotKey: string, opts: { onOpenFull?: (slot: string) => void; activeSlot?: string; messages?: unknown[]; running?: boolean } = {}) {
+function renderPane(slotKey: string, opts: { onOpenFull?: (slot: string) => void; activeSlot?: string; messages?: unknown[]; running?: boolean; acpBackend?: string } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const store = makeStore(slotKey, opts.activeSlot, opts.messages, opts.running)
+  const store = makeStore(slotKey, opts.activeSlot, opts.messages, opts.running, opts.acpBackend)
   const view = render(
     <Provider store={store}>
       <QueryClientProvider client={qc}>
@@ -94,6 +95,21 @@ beforeEach(() => {
   // FIFO queue, and a later test then silently receives an earlier one's payload.
   ;(api.chatSlotDetail as ReturnType<typeof vi.fn>).mockResolvedValue({
     messages: [], running: false, has_more: false, total: 0,
+  })
+  ;(api.kirocrewConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ agent: { acp_backend: '' } })
+})
+
+describe('ChatPane per-session backend controls', () => {
+  it('keeps Kiro controls for a Kiro pane when the default is Codex', async () => {
+    ;(api.kirocrewConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ agent: { acp_backend: 'codex' } })
+    renderPane('pane-kiro', { acpBackend: '' })
+    await waitFor(() => expect(document.querySelector('[title="Model: claude-opus-5"]')).toBeTruthy())
+  })
+
+  it('hides Kiro controls for a Codex pane when the default is Kiro', async () => {
+    ;(api.kirocrewConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ agent: { acp_backend: '' } })
+    renderPane('pane-codex', { acpBackend: 'codex' })
+    await waitFor(() => expect(document.querySelector('[title^="Model: "]')).toBeNull())
   })
 })
 
