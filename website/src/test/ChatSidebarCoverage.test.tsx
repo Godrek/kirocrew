@@ -59,6 +59,10 @@ vi.mock('../pages/chat/ChatSettings', () => ({
 const mocks = vi.hoisted(() => ({
   cleanupSessions: vi.fn(),
   chatSlotsModel: vi.fn(),
+  // The bulk switcher's listbox renders what `/api/models` served. An empty
+  // answer is authoritative ("this backend has no vocabulary"), not a cue to
+  // invent an Auto row, so the row the tests click has to be served here.
+  models: vi.fn().mockResolvedValue([{ model_name: 'auto', description: '' }]),
   clearSessions: vi.fn(),
   deleteSession: vi.fn(),
   resumeChatSlot: vi.fn(),
@@ -299,7 +303,7 @@ describe('ChatSidebar — Switch All Sessions panel', () => {
     mocks.chatSlotsModel.mockResolvedValue({ ok: true, failed: ['k-a'] })
     renderSidebar({ slots: SLOTS })
     await openHeaderPanel('Switch all to model…')
-    fireEvent.click(screen.getByRole('option', { name: /auto/i }))
+    fireEvent.click(await screen.findByRole('option', { name: /auto/i }))
     fireEvent.click(screen.getByText(/^Switch 1 session$/))
     await waitFor(() => expect(mocks.chatSlotsModel).toHaveBeenCalledWith('auto', true))
     expect(await screen.findByText('1 session failed to switch')).toBeTruthy()
@@ -309,7 +313,7 @@ describe('ChatSidebar — Switch All Sessions panel', () => {
   it('closes when the switch fully succeeds', async () => {
     renderSidebar({ slots: SLOTS })
     await openHeaderPanel('Switch all to model…')
-    fireEvent.click(screen.getByRole('option', { name: /auto/i }))
+    fireEvent.click(await screen.findByRole('option', { name: /auto/i }))
     fireEvent.click(screen.getByText(/^Switch 1 session$/))
     await waitFor(() => expect(screen.queryByText('Switch All Sessions')).toBeNull())
   })
@@ -318,7 +322,7 @@ describe('ChatSidebar — Switch All Sessions panel', () => {
     mocks.chatSlotsModel.mockRejectedValue(new Error('gateway down'))
     renderSidebar({ slots: SLOTS })
     await openHeaderPanel('Switch all to model…')
-    fireEvent.click(screen.getByRole('option', { name: /auto/i }))
+    fireEvent.click(await screen.findByRole('option', { name: /auto/i }))
     fireEvent.click(screen.getByText(/^Switch 1 session$/))
     expect(await screen.findByText('gateway down')).toBeTruthy()
   })

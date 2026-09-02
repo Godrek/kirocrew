@@ -1688,7 +1688,7 @@ describe('Alt+Shift+S/X model cycling via React Query cache', () => {
     // cache cardinality cannot, because entries outlive the surfaces that
     // fetched them, so visiting two backends would leave the shortcut dead.
     queryClient.setQueryData(['available-models', 'acp', ''], [{ name: 'auto' }, { name: 'opus' }, { name: 'sonnet' }])
-    queryClient.setQueryData(['model-capabilities', 'slot-1', null], KIRO_CAPS)
+    queryClient.setQueryData(['model-capabilities', 'slot-1', null, ''], KIRO_CAPS)
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'S', code: 'KeyS', altKey: true, shiftKey: true, bubbles: true }))
     })
@@ -1703,7 +1703,7 @@ describe('Alt+Shift+S/X model cycling via React Query cache', () => {
     store.dispatch({ type: 'chat/setActiveSlot', payload: 'slot-1' })
     const { queryClient } = renderWithProviders(<App />, { route: '/chat' })
     queryClient.setQueryData(['available-models', 'acp', ''], [{ name: 'auto' }, { name: 'opus' }, { name: 'sonnet' }])
-    queryClient.setQueryData(['model-capabilities', 'slot-1', null], KIRO_CAPS)
+    queryClient.setQueryData(['model-capabilities', 'slot-1', null, ''], KIRO_CAPS)
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', code: 'KeyX', altKey: true, shiftKey: true, bubbles: true }))
     })

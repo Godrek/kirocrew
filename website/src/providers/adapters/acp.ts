@@ -377,11 +377,25 @@ export class AcpAdapter implements ProviderAdapter {
   async fetchAvailableModels(backend?: string): Promise<ModelInfo[]> {
     try {
       const models = await api.models(backend)
-      if (!Array.isArray(models) || models.length === 0) {
-        // Empty/non-array success: NOT a live list — keep polling, serve the
-        // last-good live list if we have one, else auto-only.
+      if (!Array.isArray(models)) {
+        // Non-array success: NOT a live list — keep polling, serve the
+        // last-good live list if we have one, else the backend-safe fallback.
         markModelsDegraded(this.id, backend, true)
         return readCachedModels(backend) ?? this._defaultModels(backend)
+      }
+      if (models.length === 0) {
+        // An EMPTY success is authoritative, not degraded. Every failure the
+        // gateway can have while listing models — no kiro binary, a timed-out
+        // or failed `--list-models` spawn, empty or invalid output, a signed-out
+        // account — is a 503 that lands in the catch below. A 200 with `[]` is
+        // reserved for a backend that has no vocabulary to report until one of
+        // its sessions advertises one, and retrying cannot change that answer.
+        // Marking it degraded would poll `/api/models` every 8s for the life of
+        // the page and serve whatever fallback the cache holds instead of the
+        // truthful "nothing to offer". The cache is left alone: an empty list
+        // is not a last-good list worth serving through a later outage.
+        markModelsDegraded(this.id, backend, false)
+        return []
       }
       const result = models.map((m: RawModel) => {
         // Prefer the backend's resolved window over the bundled snapshot: the

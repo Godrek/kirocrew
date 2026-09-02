@@ -599,3 +599,40 @@ class TestGuardSeesTheSameSetAsThePicker:
         # would receive a kiro id.
         assert ACP_BACKEND_CODEX not in ACP_BACKENDS_REGISTRY_MODEL_CATALOG
         assert not has_static_catalog(ACP_BACKEND_CODEX)
+
+
+class TestRejectionRemedyNamesOnlyWhatThePickerLists:
+    """The recovery text must not steer a user at an option their list omits.
+
+    ``'auto'`` is a real row on the kiro-cli catalog and on an advertised-only
+    harness whose session advertised it. A registry-backed harness has no wire
+    id for it, so recommending it there recommends the one pick that resets the
+    session — while claiming to be the safe choice.
+    """
+
+    def test_kiro_rejection_still_offers_auto(self):
+        from kiro_crew.dashboard.chat_handlers import _model_rejected_reason
+
+        reason = _model_rejected_reason("opus-4.8-1m", ACP_BACKEND_KIRO)
+        assert reason is not None
+        assert "'auto'" in reason
+
+    def test_registry_backend_rejection_does_not_offer_auto(self):
+        from kiro_crew.dashboard.chat_handlers import _model_rejected_reason
+
+        reason = _model_rejected_reason("not-a-claude-model", ACP_BACKEND_CLAUDE)
+        assert reason is not None
+        assert "'auto'" not in reason
+        assert "select a listed model" in reason
+
+    def test_advertised_only_backend_offers_auto_only_when_advertised(self):
+        from kiro_crew.dashboard.chat_handlers import _model_rejected_reason
+
+        without = _model_rejected_reason(
+            "opus-4.8-1m", ACP_BACKEND_CODEX, advertised=["gpt-5.6-codex"]
+        )
+        assert without is not None and "'auto'" not in without
+        with_auto = _model_rejected_reason(
+            "opus-4.8-1m", ACP_BACKEND_CODEX, advertised=["auto", "gpt-5.6-codex"]
+        )
+        assert with_auto is not None and "'auto'" in with_auto

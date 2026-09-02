@@ -228,6 +228,9 @@ export function useWebSocket() {
   const lastGitlabHostsGenRef = useRef<number | null>(null)
   const lastSlotsRawRef = useRef<string | null>(null)
   const lastSlotsArrayRef = useRef<ChatSlot[] | null>(null)
+  // The bound backend each slot reported on the last slots frame, so a frame
+  // that moves a binding can be told apart from one that only bumped counts.
+  const lastBoundBackendsRef = useRef<Map<string, string | null>>(new Map())
   const voiceQueueRef = useRef<string[]>([])
   const voicePlayingRef = useRef(false)
   const activeAudioRef = useRef<HTMLAudioElement | null>(null)
@@ -865,6 +868,23 @@ export function useWebSocket() {
             lastSlotsRawRef.current = raw
             dispatch(sseSlots(data as ChatSlot[]))
             lastSlotsArrayRef.current = store.getState().dashboard.slots
+            // A slot's bound backend moving — a session binding it, or releasing
+            // it back to "whatever is configured" — changes what the server
+            // answers for that slot's model capabilities, and that query never
+            // goes stale on its own. The spawn activity event covers the bind;
+            // the unbind arrives ONLY as this frame, so it has to invalidate
+            // here or the picker keeps the released harness's shape for good.
+            // Compared frame-to-frame rather than against the store so the
+            // signal is exactly "the server reported a different binding".
+            const boundNow = new Map(
+              (Array.isArray(data) ? (data as ChatSlot[]) : [])
+                .map(s => [s.key, s.acp_backend ?? null] as const),
+            )
+            const boundBefore = lastBoundBackendsRef.current
+            lastBoundBackendsRef.current = boundNow
+            if ([...boundNow].some(([key, backend]) => backend !== (boundBefore.get(key) ?? null))) {
+              queryClient.invalidateQueries({ queryKey: ['model-capabilities'] })
+            }
             if (msg.yolo !== undefined) {
               dispatch(sseStatus({ yolo: msg.yolo } as StatusData))
             }

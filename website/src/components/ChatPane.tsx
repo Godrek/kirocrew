@@ -218,8 +218,8 @@ export default function ChatPane({
   const modelCaps = useModelCapabilities({ slot: slotKey, coldStartBackend: paneBackend })
   const availableModels = useAvailableModels({
     backend: paneBackend,
-    // Do not fetch a list for a backend that has none to give — the response
-    // would be an empty array, which the adapter reads as "degraded" and polls.
+    // Do not fetch a list for a backend that has none to give; the capability
+    // answer already says so, and the request would only confirm it.
     enabled: modelCaps.selectable,
   })
   const modelDD = useFilteredDropdown(availableModels)
