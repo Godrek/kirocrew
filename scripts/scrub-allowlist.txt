@@ -185,3 +185,11 @@ src/kiro_crew/apps/builtins/ops_mission_control/backend/providers/cloudwatch.py:
 # ...and its test, which asserts the console host is what a validated region produces and
 # that an injected one cannot move it. Same public domain, same line-anchored narrowing.
 src/kiro_crew/apps/builtins/ops_mission_control/tests/test_providers.py:.*console\.aws\.amazon\.com
+
+# The fork's AGENTS.md documents the operator's production runtime, and the
+# checkout path it names is the point of that section (it tells an agent which
+# interpreter and unit serve production). It is a local path on the fork
+# maintainer's own machine, not an employee identity. The scan reports only the
+# matched `/home/<user>` token, so the entry names that exact user: a different
+# home path added to the file is still caught.
+AGENTS.md:[0-9]*:/home/operator$
