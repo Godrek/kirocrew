@@ -3343,7 +3343,22 @@ async def api_chat_slot_reset_conversation(request: web.Request) -> web.Response
     if attached is not None:
         return attached
 
+    # A fresh conversation is the one deliberate harness change. The binding
+    # belongs to the conversation being discarded (the teardown keeps it,
+    # because a recycle is not intent to change harness — this is), so the next
+    # turn is created on the configured default. Cleared BEFORE the discard's
+    # await: a turn admitted during that suspension would otherwise spawn on the
+    # old binding and re-bind it, undoing the reset.
+    slot.acp_backend = None
     await state.sessions.discard_conversation(key, replay=replay)
+    # A pin that default cannot run goes with it, exactly as for any unbound
+    # slot.
+    drop_unrunnable_slot_model(slot, _slot_backend(slot))
+    # The metadata line still names the discarded binding until a save rewrites
+    # it, and the save skips a clean slot — so a restart before the next turn
+    # would rehydrate the harness this reset just left.
+    slot._dirty = True
+    state.push_slots_update()
     sel().log_api_access(
         caller=request.get("app", "") or "dashboard",
         operation="slot_reset_conversation",

@@ -242,8 +242,22 @@ send time.
   and `GET /api/models?slot=` (`handlers.agents._resolve_model_backend`)
   answers from the live provider, else from this binding, else the configured
   backend, so the picker's vocabulary and the slot payload always agree.
-  A provider teardown still clears the live binding (`_on_provider_unbound`),
-  and the next turn then binds afresh. The binding is written by
+  A provider teardown drops the provider, not the binding:
+  `_on_provider_unbound` keeps `acp_backend` on a slot that holds a
+  conversation, so an idle recycle, a health-sweep kill, an identity-change
+  retirement or a reaped dead provider respawns on the same harness — none of
+  those is user intent to change it. A slot nobody has spoken to is unbound
+  instead: its binding came from a speculative spawn on the default of that
+  moment, and once that unclaimed session is torn down the empty slot follows
+  the current default like any new conversation, and since a slot with no
+  messages is never written to history (the save returns on an empty
+  window), no speculative binding reaches disk to be restored either.
+  The one deliberate harness change is reset-conversation
+  (`api_chat_slot_reset_conversation`), which clears the binding before the
+  discard's await — a turn admitted during that suspension must not respawn on
+  the old harness and re-bind it — so the fresh conversation starts on the
+  configured default, drops a pin that default cannot run, and dirties the
+  slot so the next save drops the discarded binding from the metadata line. The binding is written by
   `chat_runner.bind_slot_to_session`, the one helper every path that creates a
   slot's session runs through — the real turn and the speculative eager spawn
   alike — which reads `conversation_backend(key)` onto the slot and pushes the

@@ -328,11 +328,23 @@ class TestBindSlotToSession:
         state = _mock_state(slot)
         state.sessions.conversation_backend = MagicMock(return_value=ACP_BACKEND_CLAUDE)
 
-        assert bind_slot_to_session(state, slot, "dashboard:t1") == ACP_BACKEND_CLAUDE
+        bind_slot_to_session(state, slot, "dashboard:t1")
 
         assert slot.acp_backend == ACP_BACKEND_CLAUDE
         state.sessions.conversation_backend.assert_called_once_with("dashboard:t1")
         state.push_slots_update.assert_called_once()
+
+    def test_a_provider_that_states_no_backend_keeps_the_existing_binding(self):
+        """The binding is durable; silence from the provider is not a harness change."""
+        slot = _ChatSlot("t1")
+        slot.acp_backend = ACP_BACKEND_CODEX
+        state = _mock_state(slot)
+        state.sessions.conversation_backend = MagicMock(return_value=None)
+
+        bind_slot_to_session(state, slot, "dashboard:t1")
+
+        assert slot.acp_backend == ACP_BACKEND_CODEX
+        state.push_slots_update.assert_not_called()
 
     def test_kiro_binding_is_the_empty_string_not_none(self):
         """``""`` IS the kiro harness; only an unbound slot answers None."""

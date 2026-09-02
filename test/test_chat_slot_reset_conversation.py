@@ -28,12 +28,13 @@ its own state.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from kiro_crew.acp.types import ACP_BACKEND_CLAUDE, ACP_BACKEND_KIRO
 from kiro_crew.dashboard.chat_handlers import api_chat_slot_reset_conversation
 from kiro_crew.dashboard.state import DashboardState, _ChatSlot
 
@@ -171,6 +172,40 @@ class TestTheReplayParameter:
 
 
 class TestItClearsTheRightThing:
+    @pytest.mark.asyncio
+    async def test_a_fresh_conversation_starts_on_the_configured_default(self):
+        """The one deliberate harness change: the binding and an unrunnable pin go.
+
+        A recycle keeps the conversation's binding; a reset ends the conversation
+        it belonged to, so the next turn is created on the configured default.
+        """
+        slot = _slot("chat-1-foo")
+        slot.acp_backend = ACP_BACKEND_CLAUDE
+        slot.model = "opus-4.8-1m"
+        state = _state(slot)
+        cfg = MagicMock()
+        cfg.agent.acp_backend = ACP_BACKEND_KIRO
+        # Cleared BEFORE the discard suspends: a turn admitted during that
+        # await would otherwise spawn on the old binding and re-bind it.
+        seen_during_discard: list[str | None] = []
+
+        async def _discard(key, *, replay):
+            seen_during_discard.append(slot.acp_backend)
+
+        state.sessions.discard_conversation = AsyncMock(side_effect=_discard)
+
+        with patch("kiro_crew.dashboard.chat_handlers.KiroCrewConfig.load", return_value=cfg):
+            status, _ = await _post(_make_app(state), "chat-1-foo")
+
+        assert status == 200
+        assert seen_during_discard == [None]
+        assert slot.acp_backend is None
+        assert slot.model == ""
+        # Dirty, so the next save drops the discarded binding from the metadata
+        # line instead of a restart rehydrating it.
+        assert slot._dirty is True
+        state.push_slots_update.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_it_clears_the_slot_s_own_session(self):
         state = _state(_slot("chat-1-foo"))
