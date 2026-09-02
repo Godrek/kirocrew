@@ -4745,6 +4745,43 @@ def _normalize_acp_backend(value: object) -> str:
     return ACP_BACKEND_KIRO
 
 
+def resolve_session_backend(requested: object, configured: str) -> str:
+    """The backend a session is created on: its own recorded binding, else *configured*.
+
+    *requested* is the harness a dashboard slot was bound to when its
+    conversation was created (``slot.acp_backend``): ``""`` IS kiro, and
+    ``None`` is "never bound". A bound slot keeps its harness for as long as the
+    conversation exists, across recycles and gateway restarts; the configured
+    ``agent.acp_backend`` is the default for a slot that has none.
+
+    A recorded value that is no longer selectable — an uninstalled harness, an
+    edition change — degrades to *configured* with the reason logged, the same
+    rule as ``_normalize_acp_backend``: nothing raises on the spawn path and no
+    transcript is stranded. *configured* is already normalized, so the result is
+    always selectable. The user-visible degrade happens at rehydration, which
+    calls this to decide and then unbinds the slot and says so in the chat; the
+    selectable set is fixed for the life of the process and every other writer
+    of a slot binding stores a live or selectable value, so a degrade on the
+    spawn path itself is defence in depth for a value that reached the factory
+    some other way.
+    """
+    from kiro_crew.acp.types import (  # circular: acp -> client -> session -> config.loader
+        ACP_BACKEND_KIRO_LABEL,
+        ACP_BACKENDS_SELECTABLE,
+    )
+
+    if isinstance(requested, str) and requested in ACP_BACKENDS_SELECTABLE:
+        return requested
+    if requested is not None:
+        logger.warning(
+            "Session backend %r is not selectable; creating the session on the "
+            "configured backend %r instead",
+            requested,
+            configured or ACP_BACKEND_KIRO_LABEL,
+        )
+    return configured
+
+
 def _validate_activation(value: str) -> str:
     """Return *value* if it is a valid activation mode, else ``mention`` (deny-by-default)."""
     return value if value in _VALID_ACTIVATIONS else ACTIVATION_MENTION
@@ -8516,10 +8553,12 @@ class KiroCrewConfig:
                 pass
         return DEFAULT_MODEL
 
-    def _collapsed_default_model(self) -> str:
-        """The configured default model for the SELECTED backend, collapsed.
+    def _collapsed_default_model(self, backend: str | None = None) -> str:
+        """The configured default model for *backend*, collapsed.
 
-        Resolves in that backend's own namespace (``model_for_backend``), then —
+        *backend* defaults to the SELECTED backend; a session bound to another
+        harness passes its own, so its global tier resolves in that namespace.
+        Resolves in the backend's own namespace (``model_for_backend``), then —
         only for the kiro family, and only when the value is still the ``"auto"``
         sentinel — falls through to the kiro agent spec's own pin
         (``_resolve_agent_model``). That fallthrough reads
@@ -8528,7 +8567,8 @@ class KiroCrewConfig:
         kiro's vocabulary. An adapted harness with no saved pick resolves to
         ``""`` instead: inherit whatever that backend served.
         """
-        backend = self.agent.acp_backend
+        if backend is None:
+            backend = self.agent.acp_backend
         model = self.agent.model_for_backend(backend)
         _keys, kiro_family = _backend_model_vocabulary()
         if backend in kiro_family and model == DEFAULT_MODEL:
@@ -8562,6 +8602,7 @@ class KiroCrewConfig:
         agent: str | None,
         model_override: str | None,
         global_model: str | None = None,
+        backend: str | None = None,
     ) -> str:
         """The model id the ACP factory selects — what its effort gate keys on.
 
@@ -8577,7 +8618,9 @@ class KiroCrewConfig:
         build-time collapsed default; when omitted it is recomputed the same way
         (:meth:`_collapsed_default_model`).
 
-        Every tier resolves in the SELECTED backend's namespace. Two consequences
+        ``backend`` is the harness the session is created on: the SELECTED
+        backend unless a slot bound to another harness passes its own. Every
+        tier resolves in THAT backend's namespace. Two consequences
         worth stating, because both were silently wrong while one global
         ``agent.model`` served every harness:
 
@@ -8591,9 +8634,10 @@ class KiroCrewConfig:
         ``""`` means nothing is pinned anywhere: the backend resolves the model
         itself and the effort overlay cannot be keyed.
         """
+        if backend is None:
+            backend = self.agent.acp_backend
         if global_model is None:
-            global_model = self._collapsed_default_model()
-        backend = self.agent.acp_backend
+            global_model = self._collapsed_default_model(backend)
         _keys, kiro_family = _backend_model_vocabulary()
         if model_override:
             m: str = model_override
@@ -8713,13 +8757,34 @@ class KiroCrewConfig:
 
         KiroCrew is KiroACP-only: the sole provider is the ACP adapter driving
         the kiro-cli backend. The factory accepts an optional ``session_key`` to
-        create a per-session subdirectory under ``workspace_root()``.
+        create a per-session subdirectory under ``workspace_root()``, and an
+        optional ``acp_backend`` — a slot's recorded harness — that creates the
+        provider on that backend instead of the configured default
+        (``resolve_session_backend`` degrades an unselectable value).
         """
         from kiro_crew.providers.acp import (
             AcpProvider,  # circular: acp -> client -> session -> config.loader
         )
 
         model = self._collapsed_default_model()
+        # The collapsed default of every selectable backend, resolved ONCE here
+        # rather than per session: a slot bound to a harness other than the
+        # configured one needs that harness's default, and resolving it at
+        # construction would put the kiro family's agent-spec read on the event
+        # loop for every such spawn. Keyed by backend; the configured backend's
+        # entry is ``model`` above.
+        from kiro_crew.acp.types import (  # circular: acp -> client -> session -> config.loader
+            ACP_BACKENDS_SELECTABLE,
+        )
+
+        default_models = {
+            backend: (
+                model
+                if backend == self.agent.acp_backend
+                else self._collapsed_default_model(backend)
+            )
+            for backend in ACP_BACKENDS_SELECTABLE
+        }
 
         sandbox = self.agent.sandbox
         tool_search = self.agent.tool_search
@@ -8762,6 +8827,7 @@ class KiroCrewConfig:
             extra_env: dict[str, str] | None = None,
             reasoning_effort_override: str | None = None,
             crew_agent: str | None = None,
+            acp_backend: str | None = None,
             **_kwargs: object,
         ) -> AcpProvider:
             wdir = Path(cwd) if cwd else _session_work_dir(session_key)
@@ -8791,7 +8857,25 @@ class KiroCrewConfig:
             # reported outcome cannot drift from what this gate actually keys
             # on. (The translation rationale — why to_acp_id and not
             # to_provider_id — is documented on that method.)
-            m = self.acp_effective_model(agent, model_override, global_model=model)
+            # The harness this session is created on. A never-bound caller
+            # (``acp_backend`` None) takes the configured backend down the
+            # unchanged path. A slot bound to a harness resolves its binding at
+            # this one construction point so every model tier — the global
+            # default, the named-agent pin, the wire translation — resolves in
+            # THAT backend's namespace. The result is always selectable, so the
+            # build-time map has its entry; ``get`` is belt and braces for a
+            # configured value set past the loader's own normalization.
+            if acp_backend is None:
+                backend = self.agent.acp_backend
+                m = self.acp_effective_model(agent, model_override, global_model=model)
+            else:
+                backend = resolve_session_backend(acp_backend, self.agent.acp_backend)
+                m = self.acp_effective_model(
+                    agent,
+                    model_override,
+                    global_model=default_models.get(backend, model),
+                    backend=backend,
+                )
             # Thread the slot's effort into a per-model override so the kiro
             # cli.json overlay is written from it at spawn — without this, a
             # kiro cold start (or the handler's reset-then-respawn) would only
@@ -8850,7 +8934,7 @@ class KiroCrewConfig:
                 session_key=session_key,
                 channel_id=channel_id,
                 extra_env=extra_env,
-                acp_backend=self.agent.acp_backend,
+                acp_backend=backend,
                 effort_per_model=_eff_per_model,
                 tool_search=tool_search,
                 tool_search_min_pct=tool_search_min_pct,

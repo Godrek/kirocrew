@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from kiro_crew.acp.session_handle import WatchdogSettings
-from kiro_crew.acp.types import ACP_BACKEND_KIRO
+from kiro_crew.acp.types import ACP_BACKEND_CODEX, ACP_BACKEND_KIRO
 
 
 @pytest.fixture(autouse=True)
@@ -1572,3 +1572,66 @@ class TestDiscardReaping:
             "a failing hard kill aborted the batch and leaked later providers"
         )
         assert mgr._warm_pool.qsize() == 0
+
+
+# ---------------------------------------------------------------------------
+# A slot bound to another harness
+# ---------------------------------------------------------------------------
+
+
+class TestBoundBackendAndThePool:
+    """A pooled provider is a process of the CONFIGURED harness.
+
+    A slot whose conversation is bound to another harness needs a process of
+    that harness, so the pool is bypassed and the binding reaches the factory.
+    """
+
+    def _manager_with_pool(self):
+        mgr, factory = _make_manager(pool_agent="kirocrew")
+        pooled = _make_provider()
+        mgr._warm_pool.put_nowait((pooled, time.monotonic()))
+        mgr._drain_and_claim = AsyncMock(return_value=pooled)
+        return mgr, factory, pooled
+
+    def test_the_bypass_is_a_recorded_pool_decision(self):
+        from kiro_crew.session import POOL_DECISIONS
+
+        assert "bypass_backend" in POOL_DECISIONS
+
+    @pytest.mark.asyncio
+    async def test_a_slot_bound_to_another_harness_cold_starts_on_it(self):
+        mgr, factory, _pooled = self._manager_with_pool()
+
+        await mgr.get_or_create(
+            "test-key", agent="kirocrew", model="m", acp_backend=ACP_BACKEND_CODEX
+        )
+
+        mgr._drain_and_claim.assert_not_awaited()
+        factory.assert_called_once()
+        assert factory.call_args.kwargs["acp_backend"] == ACP_BACKEND_CODEX
+
+    @pytest.mark.parametrize("binding", [ACP_BACKEND_KIRO, None])
+    @pytest.mark.asyncio
+    async def test_the_configured_harness_or_no_binding_still_claims_the_pool(self, binding):
+        """``""`` is kiro — the configured harness here — and None is never bound."""
+        mgr, factory, pooled = self._manager_with_pool()
+
+        provider, _, _ = await mgr.get_or_create(
+            "test-key", agent="kirocrew", model="m", acp_backend=binding
+        )
+
+        assert provider is pooled
+        factory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_an_unselectable_binding_reaches_the_factory_as_the_configured_backend(
+        self,
+    ):
+        """Resolved once in get_or_create; the factory never sees the raw value."""
+        mgr, factory = _make_manager(pool_agent="kirocrew")
+        mgr._drain_and_claim = AsyncMock(return_value=None)
+
+        await mgr.get_or_create("test-key", agent="kirocrew", model="m", acp_backend="byo-harness")
+
+        factory.assert_called_once()
+        assert factory.call_args.kwargs["acp_backend"] == ACP_BACKEND_KIRO
