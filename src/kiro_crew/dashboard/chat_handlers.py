@@ -23,9 +23,11 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 from kiro_crew import model_registry
 from kiro_crew.acp.client import AcpModelUnavailable, advertised_model_ids
 from kiro_crew.acp.model_catalog import (
+    CATALOG_KIRO_CLI,
     PROVIDER_DEFAULT_MODELS,
     SCOPE_LIVE_SESSION,
     SCOPE_NEXT_SESSION,
+    backend_model_capabilities,
     model_allowed,
 )
 from kiro_crew.acp.types import ACP_BACKEND_KIRO, ACP_BACKEND_KIRO_LABEL
@@ -4053,9 +4055,18 @@ def _model_rejected_reason(
     # configured default once that default changes under a live session. Saying
     # "configured" there would point the user at a backend their session is not
     # running on.
+    #
+    # Recommend 'auto' only where this backend's picker actually lists it: the
+    # kiro-cli catalog always carries the row, and an advertised-only harness
+    # carries it when its session advertised one. A registry-backed harness has
+    # no wire id for it — picking it there is a session reset — so the recovery
+    # text must not steer the user at the one option its list omits.
+    caps = backend_model_capabilities(backend, advertised=advertised)
+    offers_auto = caps.catalog == CATALOG_KIRO_CLI or "auto" in (advertised or ())
+    remedy = "select a listed model or 'auto'" if offers_auto else "select a listed model"
     return (
         f"{model_name!r} is not a model the {backend or ACP_BACKEND_KIRO_LABEL} "
-        f"backend accepts; select a listed model or 'auto'."
+        f"backend accepts; {remedy}."
     )
 
 

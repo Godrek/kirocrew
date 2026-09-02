@@ -111,6 +111,7 @@ import { useKeyboardShortcuts, IS_MAC } from './hooks/useKeyboardShortcuts'
 import { useInstanceShortcuts } from './hooks/useInstanceShortcuts'
 import { useCommandPalette } from './hooks/useCommandPalette'
 import { coldStartCapabilities, type ModelCapabilities, type ModelSwitchScope } from './providers/acpBackends'
+import { modelCapabilitiesKey } from './hooks/useModelCapabilities'
 import { useProvider } from './providers/context'
 import { useAgents } from './hooks/useAgents'
 import ShortcutsModal from './components/ShortcutsModal'
@@ -1703,8 +1704,14 @@ export default function App() {
   } => {
     const bound = store.getState().dashboard.slots
       .find((s: { key: string; acp_backend?: string | null }) => s.key === slotKey)?.acp_backend
+    // The same derivation the chat surfaces key their capability query by: the
+    // slot's bound backend, else the configured default. Anything else looks up
+    // an entry no surface ever wrote and treats the miss as "unknown".
+    const configured = queryClient
+      .getQueryData<{ agent?: { acp_backend?: string } }>(['kirocrewConfig'])
+      ?.agent?.acp_backend ?? ''
     const served = queryClient.getQueryData<ModelCapabilities>(
-      ['model-capabilities', slotKey, null],
+      modelCapabilitiesKey({ slot: slotKey, coldStartBackend: bound ?? configured }),
     )
     const backend = bound ?? served?.backend
     const entries = queryClient.getQueriesData<{ name: string }[]>({

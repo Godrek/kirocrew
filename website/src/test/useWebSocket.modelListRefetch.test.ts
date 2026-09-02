@@ -135,3 +135,68 @@ describe('useWebSocket activity_event → model list refetch', () => {
     expect(log.some(e => e.type === 'session' && e.text.includes('Session created'))).toBe(true)
   })
 })
+
+describe('useWebSocket slots frame → model capability refetch', () => {
+  // The capability query is keyed by slot and never goes stale on its own. A
+  // slot's bound backend moves on exactly two occasions: a session binds it
+  // (also announced by the spawn activity event) and a provider unbinds it —
+  // which arrives ONLY as a slots frame. Without this, a released Codex slot
+  // keeps reporting Codex's capabilities until the page reloads.
+  let testStore: ReturnType<typeof createTestStore>
+  let qc: QueryClient
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    WS_INSTANCES.length = 0
+    testStore = createTestStore()
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    vi.stubGlobal('WebSocket', MockWebSocket)
+  })
+
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  function wrapper({ children }: { children: React.ReactNode }) {
+    return createElement(Provider, { store: testStore },
+      createElement(QueryClientProvider, { client: qc }, children),
+    )
+  }
+
+  function open() {
+    renderHook(() => useWebSocket(), { wrapper })
+    const ws = WS_INSTANCES[0]
+    act(() => { ws.simulateOpen() })
+    return ws
+  }
+
+  const keysOf = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.map(c => JSON.stringify((c[0] as { queryKey?: unknown })?.queryKey))
+
+  const slot = (acp_backend: string | null) =>
+    ({ key: 's1', messages: 0, running: false, model: 'auto', acp_backend })
+
+  it('refetches capabilities when a slot is released from its backend', () => {
+    const ws = open()
+    act(() => { ws.simulateMessage({ type: 'slots', data: [slot('codex')] }) })
+    const spy = vi.spyOn(qc, 'invalidateQueries')
+    act(() => { ws.simulateMessage({ type: 'slots', data: [slot(null)] }) })
+    expect(keysOf(spy)).toContain(JSON.stringify(['model-capabilities']))
+  })
+
+  it('refetches capabilities when a slot binds', () => {
+    const ws = open()
+    act(() => { ws.simulateMessage({ type: 'slots', data: [slot(null)] }) })
+    const spy = vi.spyOn(qc, 'invalidateQueries')
+    act(() => { ws.simulateMessage({ type: 'slots', data: [slot('codex')] }) })
+    expect(keysOf(spy)).toContain(JSON.stringify(['model-capabilities']))
+  })
+
+  it('does NOT refetch on a slots frame that moved no binding', () => {
+    // Slots frames arrive on every message count change; refetching
+    // capabilities on each would hit the endpoint per prompt for nothing.
+    const ws = open()
+    act(() => { ws.simulateMessage({ type: 'slots', data: [slot('codex')] }) })
+    const spy = vi.spyOn(qc, 'invalidateQueries')
+    act(() => { ws.simulateMessage({ type: 'slots', data: [{ ...slot('codex'), messages: 3 }] }) })
+    expect(keysOf(spy)).not.toContain(JSON.stringify(['model-capabilities']))
+  })
+})

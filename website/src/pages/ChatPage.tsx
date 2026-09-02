@@ -1148,8 +1148,8 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   })
   const availableModels = useAvailableModels({
     backend: activeSlotBackend,
-    // A backend with no vocabulary answers `[]`, which the adapter reads as a
-    // degraded response and polls for. Do not ask it.
+    // A backend with no vocabulary has nothing to list; asking would only spend
+    // a request to learn what the capability answer already says.
     enabled: modelCaps.selectable,
   })
   const { open: modelDropdown, setOpen: setModelDropdown, filter: modelFilter, setFilter: setModelFilter, dropdownRef: modelDropdownRef, inputRef: modelInputRef, filtered: filteredModels } = useFilteredDropdown(availableModels)

@@ -209,7 +209,17 @@ export function ChatPanel() {
   ]
   const backendMut = useMutation({
     mutationFn: (v: string) => api.patchConfig('agent.acp_backend', v),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['kirocrewConfig'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['kirocrewConfig'] })
+      // Every "configured backend" answer just changed meaning: an unbound
+      // slot's capabilities and the backend-less model list both resolve to the
+      // new default now. Neither query goes stale on its own, and a slot that
+      // was already asked under the OLD default keeps that entry until told
+      // otherwise — so tell it, rather than leave a picker describing a harness
+      // the next session will not run on.
+      qc.invalidateQueries({ queryKey: ['model-capabilities'] })
+      qc.invalidateQueries({ queryKey: ['available-models'] })
+    },
     onError: () => setSaveError(i18nT('pages.settings.chatPanel.failed_to_save_agent_backend')),
   })
 

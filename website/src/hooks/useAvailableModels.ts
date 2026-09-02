@@ -1,16 +1,33 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { useProvider } from '../providers'
+import { isKiroModelFamily } from '../providers/acpBackends'
 import { modelListRefetchInterval } from '../providers/modelListHealth'
 import { withAutoFirst } from '../providers/modelList'
 import type { ModelInfo } from '../providers/types'
 
-/** Auto-only list used before the first fetch resolves.
+/** Auto-only list used before the first fetch resolves, for the kiro FAMILY.
  *
  *  `description: ''` for the same reason as `withAutoFirst`: Auto's short label
  *  is a catalog key resolved where it renders, not an English literal living in
  *  a data module. */
-const PLACEHOLDER: ModelInfo[] = [{ name: 'auto', description: '' }]
+const KIRO_PLACEHOLDER: ModelInfo[] = [{ name: 'auto', description: '' }]
+
+/** What every other backend shows before the first fetch resolves: nothing.
+ *
+ *  Auto is safe to offer only where the harness has an id meaning "let the
+ *  server choose" — the kiro family. claude-agent-acp declares none, so
+ *  `/api/models` omits the row there; a placeholder that puts it back exposes,
+ *  for the whole window between "capabilities say selectable" and "the list
+ *  arrived", the one pick whose only outcome is a session reset. An omitted
+ *  backend ("whatever is configured") is the same case: nothing here knows
+ *  that it is kiro, so nothing here may assume it. */
+const EMPTY_PLACEHOLDER: ModelInfo[] = []
+
+/** The list to render while the query for `backend` has no data yet. */
+export function placeholderModels(backend: string | undefined): ModelInfo[] {
+  return isKiroModelFamily(backend) ? KIRO_PLACEHOLDER : EMPTY_PLACEHOLDER
+}
 
 /**
  * THE model list. Every picker reads it through here.
@@ -63,5 +80,5 @@ export function useAvailableModels(
     refetchInterval: modelListRefetchInterval,
     ...(enabled === undefined ? {} : { enabled }),
   })
-  return data ?? PLACEHOLDER
+  return data ?? placeholderModels(backend)
 }

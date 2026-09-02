@@ -344,6 +344,24 @@ The dashboard surface is `GET /api/models?backend=&slot=` (routed by catalog
 source, not by backend identity) and `GET /api/model-capabilities`, which exists
 so the frontend stops inferring capability from `backend === ''`.
 
+Three client-side rules follow from the wire contract:
+
+- **An empty `200 []` from `/api/models` is authoritative, not degraded.** Every
+  listing failure (no kiro binary, a timed-out or failed `--list-models` spawn,
+  empty or invalid output, a signed-out account) is a `503`; the empty success is
+  reserved for a backend with no vocabulary to report. The adapter therefore
+  serves it as "nothing to offer", clears the degraded flag so the 8s self-heal
+  poll stops, and leaves the per-backend cache untouched.
+- **The pending placeholder is backend-aware.** Before the first list arrives, a
+  kiro-family picker shows the `auto` row (kiro has an id for "let the server
+  choose"); an adapted or unnamed backend shows nothing, because a synthetic
+  `auto` there is the one pick whose only outcome is a session reset.
+- **The capability cache is keyed by the resolved backend**, not by slot alone: a
+  slot's answer changes when it binds, unbinds, or the configured default moves
+  underneath it, and the query never goes stale on its own. Session spawn, a
+  slots frame that changes any slot's bound backend, and a change to
+  `agent.acp_backend` each invalidate it.
+
 ### Extension Notifications
 
 `stream_events()` yields events for kiro-cli extension notifications:

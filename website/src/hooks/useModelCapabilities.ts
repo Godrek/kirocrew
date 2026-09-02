@@ -24,10 +24,35 @@ import { coldStartCapabilities, type ModelCapabilities } from '../providers/acpB
  * looks like — the answer comes from `coldStartCapabilities(coldStartBackend)`.
  * That is asymmetric on purpose: kiro gets its real (statically-known) shape so
  * the model chip never disappears, every adapted harness gets the conservative
- * one. Pass `coldStartBackend` as the backend this surface is BOUND to, not the
- * configured default, or a live Codex pane will assume kiro's controls for a
- * frame.
+ * one. Pass `coldStartBackend` as the backend this surface is BOUND to (falling
+ * back to the configured default only for a slot that has not started), not
+ * the configured default alone, or a live Codex pane will assume kiro's
+ * controls for a frame.
+ *
+ * `coldStartBackend` is also part of the cache KEY. A slot-keyed answer
+ * describes whichever backend the server resolved the slot to at the time, and
+ * that resolution moves: the slot binds, unbinds, or the configured default
+ * changes underneath an unbound slot. Queries here never go stale on their own,
+ * and only session spawn invalidates them, so a key that ignores the backend
+ * keeps the old harness's payload — a picker hidden after a rebind, or the
+ * wrong switch scope — indefinitely. With the backend in the key, each of those
+ * transitions is a different question with its own entry.
  */
+/** The cache key for one capability question, shared with readers that look
+ *  the answer up outside a render (the keyboard model cycle in `App`). The
+ *  fourth member is the backend the caller believes it is asking about; a
+ *  reader must derive it the same way the surface did — the slot's bound
+ *  backend, else the configured default — or it looks up an entry nobody wrote. */
+export function modelCapabilitiesKey(
+  { slot, backend, coldStartBackend }: {
+    slot?: string
+    backend?: string
+    coldStartBackend?: string
+  },
+): readonly [string, string | null, string | null, string | null] {
+  return ['model-capabilities', slot ?? null, backend ?? null, coldStartBackend ?? backend ?? null]
+}
+
 export function useModelCapabilities(
   { slot, backend, enabled, coldStartBackend }: {
     slot?: string
@@ -40,7 +65,7 @@ export function useModelCapabilities(
     // `null` rather than `undefined` in the key: React Query serializes keys,
     // and an undefined member is not distinguishable from an absent one, so the
     // "configured backend" question would share an entry with a slot's.
-    queryKey: ['model-capabilities', slot ?? null, backend ?? null],
+    queryKey: modelCapabilitiesKey({ slot, backend, coldStartBackend }),
     queryFn: () => api.modelCapabilities({ slot, backend }),
     ...(enabled === undefined ? {} : { enabled }),
   })

@@ -64,11 +64,26 @@ describe('AcpAdapter.fetchAvailableModels', () => {
     expect(models.some(m => m.name.includes('-1m') || m.name === 'opus-4.8')).toBe(false)
   })
 
-  it('falls back to AUTO-ONLY when API returns empty array', async () => {
-    ;(api.models as any).mockResolvedValue([])
-    const models = await new AcpAdapter().fetchAvailableModels('')
-    expect(models).toHaveLength(1)
-    expect(models[0].name).toBe('auto')
+  it('treats an empty success as authoritative: no options, not degraded', async () => {
+    // `/api/models` answers 200 `[]` only for a backend with no vocabulary to
+    // report (every listing failure is a 503, which the catch path handles).
+    // Reading it as degraded would poll every 8s forever and serve a fallback
+    // in place of the truthful "nothing to offer".
+    markModelsDegraded('acp', 'codex', true) // a prior failure, since healed
+    vi.mocked(api.models).mockResolvedValue([])
+    const models = await new AcpAdapter().fetchAvailableModels('codex')
+    expect(models).toEqual([])
+    expect(modelsDegraded('acp', 'codex')).toBe(false)
+    expect(modelListRefetchInterval({ queryKey: ['available-models', 'acp', 'codex'] })).toBe(false)
+  })
+
+  it('does not fall back to auto on an empty success, even for kiro', async () => {
+    // The kiro path never answers 200 `[]` — its failures are all 503s — so an
+    // empty success here is the server's authoritative answer, and inventing
+    // an Auto row over it would contradict it.
+    vi.mocked(api.models).mockResolvedValue([])
+    expect(await new AcpAdapter().fetchAvailableModels('')).toEqual([])
+    expect(modelsDegraded('acp', '')).toBe(false)
   })
 
   it('falls back to AUTO-ONLY when API throws (timeout, network error)', async () => {
@@ -145,6 +160,9 @@ describe('AcpAdapter.fetchAvailableModels', () => {
     await adapter.fetchAvailableModels('')
     const cached = JSON.parse(localStorage.getItem(KIRO_CACHE_KEY) as string)
     expect(cached.models).toHaveLength(2)
+    vi.mocked(api.models).mockRejectedValue(new Error('503')) // nor a failure
+    await adapter.fetchAvailableModels('')
+    expect(JSON.parse(localStorage.getItem(KIRO_CACHE_KEY) as string).models).toHaveLength(2)
   })
 
   it('ignores a cache older than the TTL (bounds -32603 exposure)', async () => {
