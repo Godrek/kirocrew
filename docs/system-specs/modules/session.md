@@ -220,7 +220,16 @@ send time.
   slot's `acp_backend` describes only its currently live provider: every
   provider teardown clears that binding, and gateway rehydration never restores
   it from history or the resume map. Until the next provider is acquired the UI
-  falls back to the currently configured backend.
+  falls back to the currently configured backend. The binding is written by
+  `chat_runner.bind_slot_to_session`, the one helper every path that creates a
+  slot's session runs through — the real turn and the speculative eager spawn
+  alike — which reads `conversation_backend(key)` onto the slot and pushes the
+  slot update. The eager spawn binds only a session that survived its own
+  guards (not one it tore down or lost the same-key race for), so between a
+  speculative spawn and the first message the set-model guard
+  (`_slot_backend`), `clear_unrunnable_slot_models`, and the composer's slot
+  payload all answer for the harness that session is running on, not for a
+  global default changed in the meantime.
 - **Session Watchdog** (`watchdog.py`): the cleanup loop delegates its periodic
   behaviours to a `SessionWatchdog` — a stateless sequential dispatcher over
   named `CleanupHook(name, run)` entries (Command pattern; `tick()` isolates a
