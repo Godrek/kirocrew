@@ -15,9 +15,11 @@ from collections import OrderedDict, deque
 from collections.abc import Iterator, Mapping
 
 from kiro_crew import model_registry
+from kiro_crew.acp.model_catalog import model_allowed
+from kiro_crew.acp.types import ACP_BACKEND_KIRO, ACP_BACKEND_KIRO_LABEL
 from kiro_crew.agent import kiro_agents_dir_path
 from kiro_crew.atomic_write import atomic_write
-from kiro_crew.config.loader import KiroCrewConfig, config_dir
+from kiro_crew.config.loader import KiroCrewConfig, config_dir, resolve_session_backend
 from kiro_crew.dashboard.channel_slots import slot_closed_since
 from kiro_crew.dashboard.chat_utils import (
     _normalize_model,
@@ -264,6 +266,106 @@ def _load_restore_cfg() -> "KiroCrewConfig | None":
         return KiroCrewConfig.load()
     except Exception:
         return None
+
+
+#: Posted into a rehydrated slot whose recorded harness is no longer selectable.
+#: The slot is left unbound, so its next turn is created on the configured
+#: default, discards the old native session id and replays Kiro Crew's own
+#: history — the one case where that migration is correct, and it is said here
+#: rather than done silently.
+_BACKEND_UNAVAILABLE_NOTICE = (
+    "This conversation ran on the {backend} harness, which is no longer available. "
+    "Your next message continues it on the configured default harness, replaying "
+    "the conversation history into a fresh session."
+)
+
+
+def drop_unrunnable_slot_model(slot: _ChatSlot, backend: str) -> bool:
+    """Clear *slot*'s model pin when *backend* cannot run it; True if cleared.
+
+    *backend* is the harness the slot's next session is created on. A pin it
+    cannot run would be handed to that session as a model override and fail on
+    the first prompt with an unknown id — the cross-vocabulary failure the
+    per-backend namespaces exist to remove. Clearing means "inherit what the
+    backend serves"; a pin is never substituted with another id, which would
+    silently run a model the user did not choose.
+    """
+    if not slot.model or model_allowed(backend, slot.model):
+        return False
+    logger.info(
+        "Slot %s pinned %r, which backend %r does not serve — clearing the pin "
+        "so its next session inherits that backend's own model",
+        slot.key,
+        slot.model,
+        backend or ACP_BACKEND_KIRO_LABEL,
+    )
+    slot.model = ""
+    return True
+
+
+def _restore_slot_backend(slot: _ChatSlot, meta: dict, cfg: "KiroCrewConfig | None") -> str | None:
+    """Restore the harness binding recorded in *meta* onto *slot*.
+
+    The binding is the harness the conversation was created on, and it governs
+    the session for as long as the conversation exists: ``get_or_create`` passes
+    it to the provider factory, so a restart under a changed
+    ``agent.acp_backend`` continues on the same harness — native session id
+    still resumable — instead of silently migrating. ``""`` IS the kiro
+    backend, so presence is tested rather than truthiness. A transcript that
+    never recorded one (or recorded a non-string) leaves the slot unbound, and
+    the configured default applies.
+
+    A recorded harness that is no longer selectable — uninstalled, or gone with
+    an edition change — degrades to the configured default
+    (``resolve_session_backend``, which logs the reason), never raising and
+    never stranding the transcript. The slot is left unbound so its next turn
+    is created on that default, and a model pin the default cannot run is
+    dropped rather than handed over. Returns the recorded harness only when it
+    could NOT be restored, so the caller can say so in the chat once the slot
+    is fully built; ``None`` when it was restored or nothing was recorded.
+    """
+    if "acp_backend" not in meta:
+        return None
+    recorded = meta["acp_backend"]
+    if not isinstance(recorded, str):
+        return None
+    configured = cfg.agent.acp_backend if cfg is not None else ACP_BACKEND_KIRO
+    resolved = resolve_session_backend(recorded, configured)
+    if resolved == recorded:
+        slot.acp_backend = recorded
+        return None
+    logger.info(
+        "Slot %s loses its %r binding; its next session is created on %r and its "
+        "history replayed",
+        slot.key,
+        recorded,
+        resolved or ACP_BACKEND_KIRO_LABEL,
+    )
+    slot.acp_backend = None
+    drop_unrunnable_slot_model(slot, resolved)
+    return recorded
+
+
+def _post_backend_unavailable_notice(slot: _ChatSlot, backend: str) -> None:
+    """Tell the user, in the chat, that this conversation changes harness.
+
+    Posted after the slot is fully built so it lands as the newest row. It marks
+    the slot dirty, so the next save rewrites the metadata line without the
+    stale binding and a later restart does not repeat it. Tagged
+    ``kind="compaction"`` like the recycle notice, so the dashboard's follow-up
+    ``[OPTIONS:]`` backward scan skips it.
+    """
+    try:
+        slot.append(
+            "assistant",
+            _BACKEND_UNAVAILABLE_NOTICE.format(backend=backend),
+            "msg msg-a",
+            meta={"kind": "compaction"},
+        )
+    except Exception:
+        logger.debug(
+            "Failed to append backend-unavailable notice to slot %s", slot.key, exc_info=True
+        )
 
 
 def _read_open_slots_keys() -> list[object]:
@@ -849,9 +951,7 @@ def _rehydrate_slot_from_history(
                 slot.model = kiro_model_map.get(kiro_name, "")
             except Exception:
                 logger.debug("Failed to resolve model for rehydrated slot %s", slot_name, exc_info=True)
-        # Backend identity is live-provider state. History and the resume map
-        # may name a provider that no longer exists; leave the slot unbound so
-        # the frontend falls back to the configured backend for next acquisition.
+        _unrestorable_backend = _restore_slot_backend(slot, meta, _restore_cfg)
         if meta.get("reasoning_effort"):
             slot.reasoning_effort = _validate_reasoning_effort(meta["reasoning_effort"])
         if meta.get("workspace"):
@@ -1034,6 +1134,8 @@ def _rehydrate_slot_from_history(
         # turns counted above) is never rewritten.
         slot._disk_window_len = len(slot.messages)
         slot._dirty = False
+        if _unrestorable_backend is not None:
+            _post_backend_unavailable_notice(slot, _unrestorable_backend)
         logger.info("Rehydrated session %s (%s) from history", slot_name, slot.title)
         return slot
     except BaseException:
@@ -1287,8 +1389,7 @@ def _apply_recent_session(
             logger.debug(
                 "Failed to resolve model for restored slot %s", slot_name, exc_info=True
             )
-    # Backend identity is not restored: no live provider exists for this newly
-    # rehydrated slot, regardless of the backend recorded by its prior process.
+    _unrestorable_backend = _restore_slot_backend(slot, meta, _restore_cfg)
     if meta.get("reasoning_effort"):
         slot.reasoning_effort = _validate_reasoning_effort(meta["reasoning_effort"])
     if meta.get("workspace"):
@@ -1396,6 +1497,8 @@ def _apply_recent_session(
     # _disk_older_count above) are the frozen prefix saves never rewrite.
     slot._disk_window_len = len(slot.messages)
     slot._dirty = False
+    if _unrestorable_backend is not None:
+        _post_backend_unavailable_notice(slot, _unrestorable_backend)
     logger.info("Restored session %s (%s)", slot_name, slot.title)
 
 

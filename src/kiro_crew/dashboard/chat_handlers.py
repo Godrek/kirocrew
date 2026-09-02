@@ -55,6 +55,7 @@ from kiro_crew.dashboard.chat_persistence import (
     COLOR_HEX_RE,
     _attach_variants,
     _rehydrate_slot_title,
+    drop_unrunnable_slot_model,
     get_reasoning_effort_values,
     save_slot_off_loop,
 )
@@ -3969,30 +3970,21 @@ def clear_unrunnable_slot_models(state: "DashboardState", backend: str) -> list[
     model — the cross-vocabulary failure the per-backend namespaces exist to
     remove, arriving by a different road.
 
-    Only unbound slots are touched. A slot with a live provider is still running
-    on the harness it started on and its pin is still correct there; taking it
-    away would change a running session to settle a question about future ones.
-    Those are handled when they unbind, where the same check runs against the
-    backend they will next be created on.
+    A slot is judged against the harness its next session is created on: its
+    own recorded binding when it has one, else *backend*. A bound slot's pin was
+    validated against that harness when it was set, and a change to the
+    configured default never moves the slot off it, so the pin survives — taking
+    it away would change a live (or resumable) conversation to settle a question
+    about future ones. Only a never-bound slot is created on *backend*.
 
     Clearing means "inherit what the backend serves" — never a substituted id,
     which would silently run a model the user did not choose.
     """
     cleared: list[str] = []
     for name, slot in list(state._slots.items()):
-        if slot.acp_backend is not None or not slot.model:
-            continue
-        if model_allowed(backend, slot.model):
-            continue
-        logger.info(
-            "Slot %s pinned %r, which backend %r does not serve — clearing the pin "
-            "so its next session inherits that backend's own model",
-            name,
-            slot.model,
-            backend or ACP_BACKEND_KIRO_LABEL,
-        )
-        slot.model = ""
-        cleared.append(name)
+        target = slot.acp_backend if slot.acp_backend is not None else backend
+        if drop_unrunnable_slot_model(slot, target):
+            cleared.append(name)
     return cleared
 
 

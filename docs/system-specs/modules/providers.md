@@ -137,6 +137,12 @@ glue or a provider selector (see the repo-root `CLAUDE.md`).
 
 - `agent.provider` is fixed to `"acp"` (enum `["acp"]`); there is no provider to choose.
 - `create_provider_factory()` returns a `Callable` that creates the kiro-cli `AcpProvider`.
+  Its optional `acp_backend` kwarg is a dashboard slot's recorded harness
+  (`""` is kiro, `None` is never bound): the provider is created on that
+  backend instead of the configured `agent.acp_backend`, with the global
+  model tier, the named-agent pin and the wire translation all resolved in
+  that backend's namespace. An unselectable value degrades to the configured
+  backend with a logged reason (`resolve_session_backend`), never raising.
 - **`agent.model` is the kiro FAMILY's default** (kiro-cli and KAS share one set of
   model ids) and is unchanged. `agent.backend_models.<backend>` holds the default
   for an ADAPTED harness. One read point: `AgentConfig.model_for_backend(backend)`.

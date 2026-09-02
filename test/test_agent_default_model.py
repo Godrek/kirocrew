@@ -16,6 +16,7 @@ Precedence under test, highest first:
 from __future__ import annotations
 
 import json
+import logging
 import tempfile
 import unittest.mock
 from pathlib import Path
@@ -34,6 +35,7 @@ from kiro_crew.config.loader import (
     normalize_agent_model,
     resolve_agent_bindings,
     resolve_effective_model,
+    resolve_session_backend,
 )
 from kiro_crew.session import _session_model
 
@@ -398,3 +400,87 @@ class TestSessionModelStaysInTheBackendsNamespace:
         cfg = _cfg({"oncall": {"kiro_agent": "unpinned", "model": "opus-4.8-1m"}}, "")
         cfg.agent.acp_backend = ACP_BACKEND_CLAUDE
         assert _session_model(cfg, "oncall") == "opus-4.8-1m"
+
+
+class TestSessionBackendBinding:
+    """A slot's recorded harness, not the configured default, creates its session.
+
+    The configured ``agent.acp_backend`` is the default for a slot that was never
+    bound. A bound slot passes its own backend through ``get_or_create`` to the
+    factory, and every model tier resolves in THAT namespace — otherwise a
+    session re-created after a restart under a changed default would be handed
+    the configured harness's model, which its own wire rejects on the first
+    prompt.
+    """
+
+    def _cfg(self) -> KiroCrewConfig:
+        cfg = _load_from_dict({"agent": {"acp_backend": ACP_BACKEND_CODEX}})
+        cfg.agent.backend_models = {
+            ACP_BACKEND_CLAUDE: "opus-4.8-1m",
+            ACP_BACKEND_CODEX: "gpt-5-codex",
+        }
+        return cfg
+
+    @pytest.mark.parametrize("bound", [ACP_BACKEND_KIRO, ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX])
+    def test_a_selectable_binding_is_kept(self, bound: str) -> None:
+        """Including ``""``, which IS the kiro backend and not an absent value."""
+        assert resolve_session_backend(bound, ACP_BACKEND_CODEX) == bound
+
+    def test_never_bound_means_the_configured_default(self) -> None:
+        assert resolve_session_backend(None, ACP_BACKEND_CODEX) == ACP_BACKEND_CODEX
+
+    @pytest.mark.parametrize("stale", ["byo-harness", 7])
+    def test_an_unselectable_binding_degrades_with_a_logged_reason(
+        self, stale: object, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Never raises: a stale binding must not strand the transcript at spawn."""
+        with caplog.at_level(logging.WARNING, logger="kiro_crew.config.loader"):
+            assert resolve_session_backend(stale, ACP_BACKEND_CODEX) == ACP_BACKEND_CODEX
+        assert "not selectable" in caplog.text
+
+    def test_factory_creates_the_provider_on_the_bound_backend(self) -> None:
+        cfg = self._cfg()
+        with unittest.mock.patch("kiro_crew.providers.acp.AcpProvider") as provider_cls:
+            factory = cfg.create_provider_factory()
+            factory("dashboard:t1", acp_backend=ACP_BACKEND_CLAUDE)
+        kwargs = provider_cls.call_args.kwargs
+        assert kwargs["acp_backend"] == ACP_BACKEND_CLAUDE
+        # The global tier resolved in claude's namespace and wire spelling —
+        # not the codex default the factory collapsed when it was built.
+        assert kwargs["model"] == cfg._translate_model_for_backend(
+            "opus-4.8-1m", ACP_BACKEND_CLAUDE
+        )
+        assert kwargs["model"] != "gpt-5-codex"
+
+    @pytest.mark.parametrize("call_kwargs", [{}, {"acp_backend": None}])
+    def test_factory_without_a_binding_uses_the_configured_backend(self, call_kwargs: dict) -> None:
+        cfg = self._cfg()
+        with unittest.mock.patch("kiro_crew.providers.acp.AcpProvider") as provider_cls:
+            cfg.create_provider_factory()("dashboard:t1", **call_kwargs)
+        kwargs = provider_cls.call_args.kwargs
+        assert kwargs["acp_backend"] == ACP_BACKEND_CODEX
+        assert kwargs["model"] == "gpt-5-codex"
+
+    def test_factory_degrades_an_unselectable_binding_to_the_configured_backend(
+        self,
+    ) -> None:
+        cfg = self._cfg()
+        with unittest.mock.patch("kiro_crew.providers.acp.AcpProvider") as provider_cls:
+            cfg.create_provider_factory()("dashboard:t1", acp_backend="byo-harness")
+        kwargs = provider_cls.call_args.kwargs
+        assert kwargs["acp_backend"] == ACP_BACKEND_CODEX
+        assert kwargs["model"] == "gpt-5-codex"
+
+    def test_session_model_resolves_in_the_bound_backend_namespace(self) -> None:
+        cfg = self._cfg()
+        assert _session_model(cfg, None, ACP_BACKEND_CLAUDE) == "opus-4.8-1m"
+        assert _session_model(cfg, None) == "gpt-5-codex"
+        # The kiro family's "auto" global collapses to None so kiro resolves.
+        assert _session_model(cfg, None, ACP_BACKEND_KIRO) is None
+
+    def test_a_crew_pin_is_judged_against_the_bound_backend(self) -> None:
+        """A pin the bound harness cannot run inherits; it is never translated."""
+        cfg = self._cfg()
+        cfg.agents["reviewer"] = KiroCrewAgentConfig(kiro_agent="kirocrew", model="opus-4.8-1m")
+        assert _session_model(cfg, "reviewer", ACP_BACKEND_CLAUDE) == "opus-4.8-1m"
+        assert _session_model(cfg, "reviewer", ACP_BACKEND_CODEX) is None

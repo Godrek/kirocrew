@@ -114,6 +114,7 @@ from kiro_crew.config.loader import (
     build_provider_factory,
     default_project_dir,
     normalize_agent_model,
+    resolve_session_backend,
 )
 from kiro_crew.constants import COMPACT_WAIT_TIMEOUT_SECS
 from kiro_crew.executors import maintenance_executor, subprocess_executor
@@ -337,6 +338,7 @@ POOL_DECISIONS: frozenset[str] = frozenset(
         "bypass_resume",
         "bypass_stateless",
         "bypass_cwd",
+        "bypass_backend",
         "bypass_effort",
         "bypass_env",
         "disabled",
@@ -549,8 +551,10 @@ def _kiro_model_family() -> "frozenset[str]":
     return ACP_BACKENDS_KIRO_MODEL_CATALOG
 
 
-def _model_for_backend_or_none(cfg: "KiroCrewConfig", model: str) -> "str | None":
-    """*model* if the configured backend can run it, else ``None`` (inherit).
+def _model_for_backend_or_none(
+    cfg: "KiroCrewConfig", model: str, backend: "str | None" = None
+) -> "str | None":
+    """*model* if *backend* (the configured one when omitted) can run it, else ``None``.
 
     A crew pin is typed by a user who may have named a model from a different
     harness's vocabulary — or have configured the pin long before switching
@@ -559,7 +563,8 @@ def _model_for_backend_or_none(cfg: "KiroCrewConfig", model: str) -> "str | None
     backend itself serves. Neither silently substitutes a DIFFERENT model, which
     is the outcome an explicit user pick must never get.
     """
-    backend = cfg.agent.acp_backend
+    if backend is None:
+        backend = cfg.agent.acp_backend
     if backend in _kiro_model_family():
         # Unchanged kiro behaviour: kiro's own ids and the registry's canonical
         # keys both reach it through ``to_acp_id``, so nothing is filtered here.
@@ -575,8 +580,15 @@ def _model_for_backend_or_none(cfg: "KiroCrewConfig", model: str) -> "str | None
     return None
 
 
-def _session_model(cfg: "KiroCrewConfig", agent: str | None) -> "str | None":
+def _session_model(
+    cfg: "KiroCrewConfig", agent: str | None, backend: "str | None" = None
+) -> "str | None":
     """Resolve the model for a new session on *agent*, for EVERY surface.
+
+    ``backend`` is the harness the session is created on — the configured one
+    when omitted. A dashboard slot bound to another harness passes its own, so
+    the crew pin and the harness default below are judged in THAT namespace,
+    not the configured one's.
 
     ``agent`` is whatever the caller passed, and callers are not consistent: the
     dashboard passes a resolved kiro template name, while Slack threads, cron
@@ -602,15 +614,16 @@ def _session_model(cfg: "KiroCrewConfig", agent: str | None) -> "str | None":
 
     Blocking I/O (globs + reads ``~/.kiro/agents/*.json``): call in an executor.
     """
+    if backend is None:
+        backend = cfg.agent.acp_backend
     crew = cfg.agents.get(agent) if agent else None
     if crew is not None:
         crew_model = normalize_agent_model(crew.model)
         if crew_model:
-            return _model_for_backend_or_none(cfg, crew_model)
+            return _model_for_backend_or_none(cfg, crew_model, backend)
         # The crew defers, so continue down the chain on the template it binds.
         agent = crew.kiro_agent or agent
 
-    backend = cfg.agent.acp_backend
     if backend not in _kiro_model_family():
         # The kiro-namespaced tiers below do not apply. This harness's own
         # configured default is the whole answer, and "" means inherit.
@@ -2853,6 +2866,20 @@ class SessionManager:
         # it, so deferring past that short-circuit keeps per-agent resolution
         # (which globs + reads ``~/.kiro/agents/*.json``) off the hot path for
         # already-live sessions.
+        #
+        # The harness this session is created on. A dashboard slot passes the
+        # backend its conversation is bound to (``acp_backend``); every other
+        # caller takes the configured default. Resolved here, before the model
+        # tiers and the pool decision read it, and the resolved value replaces
+        # the raw request in the factory kwargs — so the factory's own
+        # normalization finds a selectable value and all three agree on the
+        # namespace.
+        session_backend = self._cfg.agent.acp_backend
+        if "acp_backend" in extra_factory_kwargs:
+            session_backend = resolve_session_backend(
+                extra_factory_kwargs["acp_backend"], self._cfg.agent.acp_backend
+            )
+            extra_factory_kwargs["acp_backend"] = session_backend
         if model is None:
             # KiroACP-only: the effective model is the kiro/ACP slot.
             #
@@ -2868,7 +2895,7 @@ class SessionManager:
             # duration. No lock or session semaphore is held here, so awaiting
             # is safe.
             model = await asyncio.get_running_loop().run_in_executor(
-                None, _session_model, self._cfg, agent
+                None, _session_model, self._cfg, agent, session_backend
             )
 
         # Check session map for resume — only for long-lived sessions.
@@ -2925,6 +2952,10 @@ class SessionManager:
             pool_decision = "bypass_stateless"
         elif cwd_blocks_pool:
             pool_decision = "bypass_cwd"
+        elif session_backend != self._cfg.agent.acp_backend:
+            # A pooled provider is a process of the configured harness; a slot
+            # bound to another one needs a process of THAT harness.
+            pool_decision = "bypass_backend"
         elif extra_factory_kwargs.get("reasoning_effort_override"):
             # A requested reasoning effort is applied by the provider factory
             # at construction (the cli.json overlay is written from

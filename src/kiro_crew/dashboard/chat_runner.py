@@ -3206,7 +3206,16 @@ async def _eager_spawn(
             # in the wrong workspace). Agent/project changes re-arm through
             # schedule_eager_spawn and cancel this task, but the other
             # switches don't — the snapshot covers them all uniformly.
-            _bound = (slot.agent, slot.model, slot.project, slot.reasoning_effort)
+            _bound = (
+                slot.agent,
+                slot.model,
+                slot.project,
+                slot.reasoning_effort,
+                # The binding too: a reset-conversation racing the handshake
+                # clears it deliberately, and binding the slot to a session
+                # created on the old harness would undo that.
+                slot.acp_backend,
+            )
             kiro_agent: str | None = None
             # Canonical crew identity for watchdog overrides. Seeded from the
             # slot, replaced by the resolver's alias below: an EMPTY slot runs
@@ -3295,6 +3304,9 @@ async def _eager_spawn(
                     speculative=True,
                     speculative_resume=allow_resume,
                     reasoning_effort_override=slot.reasoning_effort or None,
+                    # The harness this conversation is bound to; None means
+                    # never bound, so the configured default applies.
+                    acp_backend=slot.acp_backend,
                 )
             except SpeculativeResumeRefused:
                 # Two sources: the entry gate (resumable key, resume not
@@ -3335,7 +3347,13 @@ async def _eager_spawn(
             # registered carries stale bindings. Remove it — the first real
             # message cold-starts with the current bindings, exactly as if
             # eager spawn never ran.
-            if (slot.agent, slot.model, slot.project, slot.reasoning_effort) != _bound:
+            if (
+                slot.agent,
+                slot.model,
+                slot.project,
+                slot.reasoning_effort,
+                slot.acp_backend,
+            ) != _bound:
                 logger.info(
                     "Eager spawn: slot %s bindings changed mid-handshake, removing session",
                     slot.key,
@@ -5230,6 +5248,12 @@ async def _run_chat(
             model=slot.model or agent_model or None,
             cwd=slot.project or None,
             reasoning_effort_override=slot.reasoning_effort or None,
+            # A bound slot is re-created on the harness its conversation
+            # started on — across recycles and gateway restarts — so its
+            # native session id stays resumable and its model vocabulary
+            # stays the one the user has been choosing from. The configured
+            # backend applies only to a slot that was never bound.
+            acp_backend=slot.acp_backend,
         )
         _acquired = True
         # Bind the slot to the provider that actually owns this session (a

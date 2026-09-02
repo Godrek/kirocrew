@@ -34,6 +34,8 @@ import pytest
 from chat_test_helpers import _make_ready_kiro_prerequisite
 
 from kiro_crew.acp.types import (
+    ACP_BACKEND_CODEX,
+    ACP_BACKEND_KIRO,
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
     EVENT_TEXT_CHUNK,
@@ -2248,6 +2250,27 @@ class TestRunChatLocalCommands:
 
 
 # ── _run_chat: recovery ladders ───────────────────────────────────────────
+
+
+class TestRunChatPassesSlotBinding:
+    """The real turn re-creates a bound slot's session on its own harness.
+
+    ``get_or_create`` receives the slot's recorded backend — ``""`` for kiro,
+    None when never bound — so a recycle or a restart under a changed default
+    continues the conversation where it started.
+    """
+
+    @pytest.mark.parametrize("binding", [ACP_BACKEND_CODEX, ACP_BACKEND_KIRO, None])
+    @pytest.mark.asyncio
+    async def test_the_slot_binding_reaches_get_or_create(self, tmp_path, binding):
+        state, client = _runner_state(tmp_path)
+        slot = _slot()
+        slot.acp_backend = binding
+        _set_stream(client, [LLMEvent(kind=EVENT_TEXT_CHUNK, text="hi"), _complete()])
+
+        await _drive(state, slot)
+
+        assert state.sessions.get_or_create.await_args.kwargs["acp_backend"] == binding
 
 
 class TestRunChatRecoveryLadders:
