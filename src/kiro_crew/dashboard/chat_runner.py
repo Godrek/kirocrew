@@ -3042,6 +3042,29 @@ async def _cap_armed_prefetches(sessions: Any, new_key: str) -> None:
             logger.warning("Resume prefetch: eviction failed for %s", oldest, exc_info=True)
 
 
+def bind_slot_to_session(
+    state: "DashboardState", slot: "_ChatSlot", session_key: str
+) -> str | None:
+    """Record on *slot* the harness of the session just created under *session_key*.
+
+    Every path that creates a slot's session runs through here — the real turn
+    and the speculative eager spawn alike — because the configured backend is
+    only the default for FUTURE sessions. ``_slot_backend`` (the set-model
+    guard), ``clear_unrunnable_slot_models`` and the slot payload the composer
+    reads all answer from this binding rather than from the live provider, so a
+    session that binds a harness without writing it here is fronted by a slot
+    that keeps answering for whatever the global default currently says. The
+    slot update is pushed here for the same reason: the composer's picker keys
+    its vocabulary off the payload, and no other push is guaranteed to follow a
+    speculative spawn. Returns the bound backend (``None`` when the session has
+    no live ACP client to read it from).
+    """
+    backend = state.sessions.conversation_backend(session_key)
+    slot.acp_backend = backend
+    state.push_slots_update()
+    return backend
+
+
 def schedule_eager_spawn(
     state: "DashboardState", slot: "_ChatSlot", *, allow_resume: bool = False
 ) -> "asyncio.Task | None":
@@ -3319,6 +3342,11 @@ async def _eager_spawn(
                 )
                 await sessions.remove(session_key)
                 return
+            # The session survived every guard above, so it is the one the
+            # first real turn will claim: bind the slot to it now, not at that
+            # turn, or the model picker and the set-model guard answer for the
+            # configured default until the user types.
+            bind_slot_to_session(state, slot, session_key)
             logger.info(
                 "Eager spawn: session ready for %s in %.0fms (new=%s resumed=%s)",
                 session_key,
@@ -5204,9 +5232,9 @@ async def _run_chat(
             reasoning_effort_override=slot.reasoning_effort or None,
         )
         _acquired = True
-        # Bind the slot to the provider that actually owns this session. The
-        # configured backend is only a default for future sessions.
-        slot.acp_backend = state.sessions.conversation_backend(session_key)
+        # Bind the slot to the provider that actually owns this session (a
+        # no-op re-bind when the eager spawn already did it for this session).
+        bind_slot_to_session(state, slot, session_key)
         # Member activity pointer — once per SESSION, not per turn: the log
         # answers "which sessions did this member take part in", so a per-turn
         # append would inflate every count taken from it. `slot.agent` is the

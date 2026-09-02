@@ -14,8 +14,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from kiro_crew.dashboard import chat_runner
-from kiro_crew.dashboard.chat_runner import _eager_spawn, schedule_eager_spawn
+from kiro_crew.acp.types import ACP_BACKEND_CLAUDE, ACP_BACKEND_KIRO
+from kiro_crew.dashboard import chat_handlers, chat_runner
+from kiro_crew.dashboard.chat_runner import (
+    _eager_spawn,
+    bind_slot_to_session,
+    schedule_eager_spawn,
+)
 from kiro_crew.dashboard.state import DashboardState, _ChatSlot
 from kiro_crew.session import FirstTurnState
 
@@ -306,6 +311,152 @@ class TestEagerSpawn:
         # Semaphore still released so the winner's next turn isn't blocked.
         key = state.sessions.get_or_create.await_args.args[0]
         state.sessions.release.assert_called_once_with(key)
+
+
+def _cfg_backend(backend: str) -> MagicMock:
+    """A config loader whose configured default backend is *backend*."""
+    cfg = MagicMock()
+    cfg.agent.acp_backend = backend
+    return MagicMock(return_value=cfg)
+
+
+class TestBindSlotToSession:
+    """The one helper both session-creating paths bind a slot through."""
+
+    def test_records_the_live_backend_and_pushes_the_slot(self):
+        slot = _ChatSlot("t1")
+        state = _mock_state(slot)
+        state.sessions.conversation_backend = MagicMock(return_value=ACP_BACKEND_CLAUDE)
+
+        assert bind_slot_to_session(state, slot, "dashboard:t1") == ACP_BACKEND_CLAUDE
+
+        assert slot.acp_backend == ACP_BACKEND_CLAUDE
+        state.sessions.conversation_backend.assert_called_once_with("dashboard:t1")
+        state.push_slots_update.assert_called_once()
+
+    def test_kiro_binding_is_the_empty_string_not_none(self):
+        """``""`` IS the kiro harness; only an unbound slot answers None."""
+        slot = _ChatSlot("t1")
+        state = _mock_state(slot)
+        state.sessions.conversation_backend = MagicMock(return_value=ACP_BACKEND_KIRO)
+
+        bind_slot_to_session(state, slot, "dashboard:t1")
+
+        assert slot.acp_backend == ACP_BACKEND_KIRO
+        assert slot.to_dict()["acp_backend"] == ACP_BACKEND_KIRO
+
+
+class TestEagerSpawnBindsSlot:
+    """A speculative session binds the slot exactly as a real first turn does.
+
+    Between the eager spawn and the first message a live session on backend A
+    is otherwise fronted by a slot every reader treats as unbound and answers
+    for with the configured default — wrong the moment that default changes.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_debounce(self, monkeypatch):
+        monkeypatch.setattr(chat_runner, "_EAGER_SPAWN_DEBOUNCE_SECS", 0)
+
+    async def _spawn_on_claude(self, slot: _ChatSlot) -> DashboardState:
+        state = _mock_state(slot)
+        state.sessions.conversation_backend = MagicMock(return_value=ACP_BACKEND_CLAUDE)
+        with patch.object(chat_runner.KiroCrewConfig, "load", _cfg(True)):
+            await _eager_spawn(state, slot)
+        return state
+
+    @pytest.mark.asyncio
+    async def test_binds_the_spawned_backend_and_pushes_the_payload(self):
+        slot = _ChatSlot("t1")
+        state = await self._spawn_on_claude(slot)
+
+        key = state.sessions.get_or_create.await_args.args[0]
+        state.sessions.conversation_backend.assert_called_once_with(key)
+        assert slot.acp_backend == ACP_BACKEND_CLAUDE
+        # The composer keys its picker off this field and falls back to the
+        # configured backend only when it is null.
+        assert slot.to_dict()["acp_backend"] == ACP_BACKEND_CLAUDE
+        state.push_slots_update.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_bound_slot_reports_its_backend_after_the_default_changes(self):
+        slot = _ChatSlot("t1")
+        await self._spawn_on_claude(slot)
+
+        # The operator flips the global default under the live, untouched slot.
+        with patch.object(chat_handlers.KiroCrewConfig, "load", _cfg_backend(ACP_BACKEND_KIRO)):
+            assert chat_handlers._slot_backend(slot) == ACP_BACKEND_CLAUDE
+
+    @pytest.mark.asyncio
+    async def test_set_model_guard_validates_against_the_slot_backend(self):
+        """Both directions of the cross-vocabulary failure the window admitted.
+
+        The bound harness admits its own wire id, which the configured default
+        would refuse; and it refuses an id the configured default would have
+        admitted only to have the session's wire reject it on the first prompt.
+        """
+        slot = _ChatSlot("t1")
+        await self._spawn_on_claude(slot)
+
+        with patch.object(chat_handlers.KiroCrewConfig, "load", _cfg_backend(ACP_BACKEND_KIRO)):
+            backend = chat_handlers._slot_backend(slot)
+            assert chat_handlers._model_rejected_reason("opus-4.8-1m", backend) is None
+            assert chat_handlers._model_rejected_reason("not-a-claude-model", backend)
+            # The configured default answers the opposite for both — the
+            # answer the guard gave in the window before the slot was bound.
+            assert chat_handlers._model_rejected_reason("opus-4.8-1m", ACP_BACKEND_KIRO)
+            assert (
+                chat_handlers._model_rejected_reason("not-a-claude-model", ACP_BACKEND_KIRO) is None
+            )
+
+    @pytest.mark.asyncio
+    async def test_pin_survives_a_default_change_on_a_bound_slot(self):
+        """clear_unrunnable_slot_models skips bound slots — this slot must count."""
+        slot = _ChatSlot("t1")
+        slot.model = "opus-4.8-1m"
+        state = await self._spawn_on_claude(slot)
+        state._slots = {"t1": slot}
+
+        assert chat_handlers.clear_unrunnable_slot_models(state, ACP_BACKEND_KIRO) == []
+        assert slot.model == "opus-4.8-1m"
+
+        # The same slot, unbound, is exactly what the window used to look like.
+        slot.acp_backend = None
+        assert chat_handlers.clear_unrunnable_slot_models(state, ACP_BACKEND_KIRO) == ["t1"]
+        assert slot.model == ""
+
+    @pytest.mark.asyncio
+    async def test_does_not_bind_a_session_it_tore_down(self, tmp_path):
+        """A slot must never claim a harness for a session that no longer exists."""
+        slot = _ChatSlot("t1")
+        slot.project = str(tmp_path / "a")
+        state = _mock_state(slot)
+        state.sessions.conversation_backend = MagicMock(return_value=ACP_BACKEND_CLAUDE)
+
+        async def _create_then_switch(*a, **kw):
+            slot.project = str(tmp_path / "b")
+            return (MagicMock(), True, False)
+
+        state.sessions.get_or_create = AsyncMock(side_effect=_create_then_switch)
+        with patch.object(chat_runner.KiroCrewConfig, "load", _cfg(True)):
+            await _eager_spawn(state, slot)
+
+        state.sessions.remove.assert_awaited_once()
+        assert slot.acp_backend is None
+        state.sessions.conversation_backend.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_does_not_bind_when_another_creator_won(self):
+        """The race winner is a real turn, and it binds the slot itself."""
+        slot = _ChatSlot("t1")
+        state = _mock_state(slot)
+        state.sessions.conversation_backend = MagicMock(return_value=ACP_BACKEND_CLAUDE)
+        state.sessions.get_or_create = AsyncMock(return_value=(MagicMock(), False, False))
+        with patch.object(chat_runner.KiroCrewConfig, "load", _cfg(True)):
+            await _eager_spawn(state, slot)
+
+        assert slot.acp_backend is None
+        state.sessions.conversation_backend.assert_not_called()
 
 
 class TestTtftMetric:
