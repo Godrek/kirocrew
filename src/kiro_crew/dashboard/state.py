@@ -5400,27 +5400,52 @@ class DashboardState:
         self.sessions.set_recycle_callback(_on_recycled)
 
         def _on_provider_unbound(key: str) -> None:
+            """Drop the provider, not the binding.
+
+            ``slot.acp_backend`` is the harness the CONVERSATION was created
+            on, and this fires on every teardown that is not user intent to
+            change it: an idle recycle, a health-sweep kill, an identity-change
+            retirement, a provider that died and was reaped. The conversation
+            is still open in front of the user, so the binding stays and the
+            next spawn re-creates the session on the same harness
+            (``get_or_create`` reads it). A change to the configured default
+            is a default for FUTURE conversations and must not redefine this
+            one. The one deliberate harness change, reset-conversation, clears
+            the binding itself.
+
+            A slot nobody has spoken to is the exception: it has no
+            conversation to keep a harness for. Its binding came from a
+            speculative spawn on the default of that moment, so once that
+            unclaimed session is torn down the slot follows whatever default
+            the operator has chosen since, like any new conversation.
+
+            The pin re-check is for a slot that has no binding to answer for
+            it: judged against the configured backend its next session would
+            be created on, so a pin that harness cannot run is not handed over
+            as a model override that dies on the first prompt. A bound slot's
+            pin is judged against its own harness and survives.
+            """
             from kiro_crew.dashboard.chat_utils import dashboard_slot_key
 
             slot_key = dashboard_slot_key(key)
             slot = self.get_slot(slot_key) if slot_key else None
             if slot is None:
                 return
-            slot.acp_backend = None
-            # The slot's pin was valid for the harness it just released. Its NEXT
-            # session is created on the configured backend, so a pin that harness
-            # cannot run has to go now — otherwise it is handed over as a model
-            # override and the new session dies on its first prompt. Runs here
-            # rather than at spawn because this is the moment the pin stops being
-            # true, and nothing else revisits it.
-            from kiro_crew.config import KiroCrewConfig as _Config
-            from kiro_crew.dashboard.chat_handlers import clear_unrunnable_slot_models
+            unbound = False
+            if not slot.messages and slot.acp_backend is not None:
+                slot.acp_backend = None
+                unbound = True
+            # circular import: chat_handlers imports state at module scope.
+            from kiro_crew.dashboard.chat_handlers import _slot_backend
+            from kiro_crew.dashboard.chat_persistence import drop_unrunnable_slot_model
 
             try:
-                clear_unrunnable_slot_models(self, _Config.load().agent.acp_backend)
+                cleared = drop_unrunnable_slot_model(slot, _slot_backend(slot))
             except Exception:  # pragma: no cover - config load is resilient
-                logger.debug("Could not re-check slot model pins on unbind", exc_info=True)
-            self.push_slots_update()
+                cleared = False
+                logger.debug("Could not re-check slot model pin on unbind", exc_info=True)
+            if cleared or unbound:
+                self.push_slots_update()
 
         self.sessions.set_provider_unbound_callback(_on_provider_unbound)
 

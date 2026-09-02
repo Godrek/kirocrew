@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from kiro_crew.acp.types import ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX, ACP_BACKEND_KIRO
 from kiro_crew.dashboard.state import DashboardState
 
 
@@ -623,11 +624,41 @@ class TestCompactCallbackWiring:
         cb = state.sessions.set_compact_callback.call_args[0][0]
         assert callable(cb)
 
-    @pytest.mark.parametrize("bound_backend", ["", "codex"])
-    def test_provider_teardown_clears_live_backend_binding(
+    @pytest.mark.parametrize("bound_backend", [ACP_BACKEND_KIRO, ACP_BACKEND_CODEX])
+    def test_provider_teardown_keeps_the_conversation_backend_binding(
         self, state: DashboardState, bound_backend: str
     ) -> None:
-        """Kiro→Codex and Codex→Kiro both fall back after provider teardown."""
+        """A recycle drops the provider, not the harness the conversation runs on.
+
+        ``""`` IS kiro: it must survive as a binding rather than read as absent.
+        The next spawn re-creates the session on this value, so clearing it here
+        would migrate an open conversation to whatever the configured default
+        says by then — the same silent switch as the restart case, with nothing
+        visible to attribute it to.
+        """
+        slot = state.get_or_create_slot("chat-1")
+        slot.append("user", "hello", "msg msg-u")
+        slot.acp_backend = bound_backend
+        state.push_slots_update = MagicMock()  # type: ignore[method-assign]
+
+        state.wire_session_recycle_callback()
+        callback = state.sessions.set_provider_unbound_callback.call_args.args[0]
+        callback("dashboard:chat-1")
+
+        assert slot.acp_backend == bound_backend
+        state.push_slots_update.assert_not_called()
+
+    @pytest.mark.parametrize("bound_backend", [ACP_BACKEND_KIRO, ACP_BACKEND_CLAUDE])
+    def test_provider_teardown_unbinds_a_slot_nobody_has_spoken_to(
+        self, state: DashboardState, bound_backend: str
+    ) -> None:
+        """An empty slot has no conversation to keep a harness for.
+
+        Its binding came from a speculative spawn on the default of that moment;
+        once that unclaimed session is torn down the slot must follow the default
+        the operator has chosen since, or an untouched tab stays pinned to a
+        harness nobody picked for it.
+        """
         slot = state.get_or_create_slot("chat-1")
         slot.acp_backend = bound_backend
         state.push_slots_update = MagicMock()  # type: ignore[method-assign]
@@ -637,6 +668,46 @@ class TestCompactCallbackWiring:
         callback("dashboard:chat-1")
 
         assert slot.acp_backend is None
+        state.push_slots_update.assert_called_once()
+
+    def test_provider_teardown_keeps_a_pin_the_bound_harness_runs(
+        self, state: DashboardState
+    ) -> None:
+        """The pin is judged against the slot's own harness, never the configured one."""
+        slot = state.get_or_create_slot("chat-1")
+        slot.append("user", "hello", "msg msg-u")
+        slot.acp_backend = ACP_BACKEND_CLAUDE
+        slot.model = "opus-4.8-1m"
+        state.push_slots_update = MagicMock()  # type: ignore[method-assign]
+        cfg = MagicMock()
+        cfg.agent.acp_backend = ACP_BACKEND_KIRO
+
+        state.wire_session_recycle_callback()
+        callback = state.sessions.set_provider_unbound_callback.call_args.args[0]
+        with patch("kiro_crew.config.KiroCrewConfig.load", return_value=cfg):
+            callback("dashboard:chat-1")
+
+        assert slot.model == "opus-4.8-1m"
+        assert slot.acp_backend == ACP_BACKEND_CLAUDE
+        state.push_slots_update.assert_not_called()
+
+    def test_provider_teardown_clears_an_unbound_slot_s_unrunnable_pin(
+        self, state: DashboardState
+    ) -> None:
+        """A slot with no binding is created on the configured default next."""
+        slot = state.get_or_create_slot("chat-1")
+        slot.acp_backend = None
+        slot.model = "opus-4.8-1m"
+        state.push_slots_update = MagicMock()  # type: ignore[method-assign]
+        cfg = MagicMock()
+        cfg.agent.acp_backend = ACP_BACKEND_KIRO
+
+        state.wire_session_recycle_callback()
+        callback = state.sessions.set_provider_unbound_callback.call_args.args[0]
+        with patch("kiro_crew.config.KiroCrewConfig.load", return_value=cfg):
+            callback("dashboard:chat-1")
+
+        assert slot.model == ""
         state.push_slots_update.assert_called_once()
 
     @pytest.mark.asyncio

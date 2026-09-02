@@ -3042,9 +3042,7 @@ async def _cap_armed_prefetches(sessions: Any, new_key: str) -> None:
             logger.warning("Resume prefetch: eviction failed for %s", oldest, exc_info=True)
 
 
-def bind_slot_to_session(
-    state: "DashboardState", slot: "_ChatSlot", session_key: str
-) -> str | None:
+def bind_slot_to_session(state: "DashboardState", slot: "_ChatSlot", session_key: str) -> None:
     """Record on *slot* the harness of the session just created under *session_key*.
 
     Every path that creates a slot's session runs through here — the real turn
@@ -3056,13 +3054,16 @@ def bind_slot_to_session(
     that keeps answering for whatever the global default currently says. The
     slot update is pushed here for the same reason: the composer's picker keys
     its vocabulary off the payload, and no other push is guaranteed to follow a
-    speculative spawn. Returns the bound backend (``None`` when the session has
-    no live ACP client to read it from).
+    speculative spawn. A session that states no backend (the ``LLMProvider``
+    default) leaves the existing binding as is: the binding is durable across
+    teardowns, and silence is not evidence the conversation changed harness,
+    so it must not erase what a restart or recycle preserved.
     """
     backend = state.sessions.conversation_backend(session_key)
+    if backend is None:
+        return
     slot.acp_backend = backend
     state.push_slots_update()
-    return backend
 
 
 def schedule_eager_spawn(
