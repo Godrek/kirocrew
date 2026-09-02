@@ -1,10 +1,13 @@
 name: Build
 
+# `main` mirrors upstream byte-for-byte; `personal` is this fork's integration
+# branch, the one every fork PR targets and both local gateways run from. Without
+# it here a PR into `personal` gets no verdict at all.
 on:
   push:
-    branches: [main]
+    branches: [main, personal]
   pull_request:
-    branches: [main]
+    branches: [main, personal]
 
 permissions:
   contents: read
