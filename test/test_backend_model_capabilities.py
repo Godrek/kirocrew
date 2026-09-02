@@ -235,6 +235,29 @@ class TestBackendResolution:
         # is exactly the substitution this module exists to prevent.
         assert agents._resolve_model_backend(request) is None
 
+    def test_a_bound_slot_with_no_live_provider_answers_from_its_binding(self, monkeypatch):
+        # A slot restored after a restart (or recycled while idle) has no
+        # provider yet, but its next session is created on its recorded
+        # harness — so the picker shows that harness's models, not the
+        # configured default's, or the two halves of one picker disagree.
+        request = _request(query={"slot": "chat-1"}, configured_backend=ACP_BACKEND_KIRO)
+        request.app["state"].get_slot = lambda name: SimpleNamespace(acp_backend=ACP_BACKEND_CODEX)
+        _with_config(monkeypatch, request)
+        assert agents._resolve_model_backend(request) == ACP_BACKEND_CODEX
+
+    def test_a_bound_kiro_slot_with_no_live_provider_is_kiro_not_absent(self, monkeypatch):
+        # "" IS the kiro binding; a truthiness test would fall through to codex.
+        request = _request(query={"slot": "chat-1"}, configured_backend=ACP_BACKEND_CODEX)
+        request.app["state"].get_slot = lambda name: SimpleNamespace(acp_backend=ACP_BACKEND_KIRO)
+        _with_config(monkeypatch, request)
+        assert agents._resolve_model_backend(request) == ACP_BACKEND_KIRO
+
+    def test_a_never_bound_slot_with_no_live_provider_is_the_configured_default(self, monkeypatch):
+        request = _request(query={"slot": "chat-1"}, configured_backend=ACP_BACKEND_CODEX)
+        request.app["state"].get_slot = lambda name: SimpleNamespace(acp_backend=None)
+        _with_config(monkeypatch, request)
+        assert agents._resolve_model_backend(request) == ACP_BACKEND_CODEX
+
     def test_live_slot_outranks_the_configured_default(self, monkeypatch):
         # The core live-binding contract: an existing Kiro session keeps showing
         # Kiro models after the operator switches the default to Codex.

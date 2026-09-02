@@ -1405,8 +1405,13 @@ def _resolve_model_backend(request: web.Request) -> str | None:
        parameter, so presence is tested rather than truthiness.
     2. ``?slot=`` — the composer asking about ONE session. Resolved from the live
        provider's own ``acp_backend``, so an existing session keeps showing its
-       own models after the operator changes the default for new sessions.
-    3. the configured ``agent.acp_backend`` — an unbound/new slot, which will be
+       own models after the operator changes the default for new sessions; with
+       no live provider, from the slot's recorded binding, which is the harness
+       its next session is created on (a slot restored after a restart, or
+       recycled while idle, must not show the default's models until it is
+       spoken to — the slot payload already names its binding, and the two
+       halves of one picker must agree).
+    3. the configured ``agent.acp_backend`` — a never-bound slot, which will be
        created on that harness.
 
     Returns ``None`` for an explicit backend that is not selectable: answering
@@ -1424,6 +1429,9 @@ def _resolve_model_backend(request: web.Request) -> str | None:
             identity = provider.acp_backend if provider is not None else None
             if identity is not None:
                 return identity
+            bound = state.get_slot(slot)
+            if bound is not None and bound.acp_backend is not None:
+                return bound.acp_backend
         except (KeyError, AttributeError):
             pass
     return KiroCrewConfig.load().agent.acp_backend

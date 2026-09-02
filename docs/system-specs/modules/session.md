@@ -217,10 +217,33 @@ send time.
 - **Idle cleanup**: expires sessions after `session.timeout_secs` (default
   60min). Never expires `BACKGROUND_KEY`. Dashboard per-tab sessions
   (`dashboard:{slot_key}`) idle-expire like any other session. A dashboard
-  slot's `acp_backend` describes only its currently live provider: every
-  provider teardown clears that binding, and gateway rehydration never restores
-  it from history or the resume map. Until the next provider is acquired the UI
-  falls back to the currently configured backend. The binding is written by
+  slot's `acp_backend` is the harness its conversation was created on. It is
+  persisted on the transcript metadata line and restored from it on
+  rehydration (`chat_persistence._restore_slot_backend`), and both slot paths
+  pass it to `get_or_create` as `acp_backend`, which resolves it once
+  (`config.loader.resolve_session_backend`), resolves the session model in
+  that harness's namespace (`_session_model(cfg, agent, backend)`), bypasses
+  the warm pool when it differs from the configured backend
+  (`bypass_backend` — a pooled process is one of the configured harness), and
+  hands it to the provider factory, whose `acp_backend` kwarg creates the
+  provider on that harness with every model tier resolved there. So a gateway
+  restart under a changed `agent.acp_backend` continues the conversation on
+  the harness it started on, with its native session id still resumable; the
+  configured backend applies only to a slot that was never bound (`None`).
+  A recorded harness that is no longer in `ACP_BACKENDS_SELECTABLE` degrades
+  to the configured default with the reason logged, the same rule as
+  `_normalize_acp_backend`: rehydration leaves the slot unbound, clears a
+  model pin that default cannot run, and posts a notice in the chat that the
+  next turn changes harness and replays history — the one case where that
+  migration is correct, said rather than done silently.
+  `clear_unrunnable_slot_models` judges every pin against the harness the
+  slot's next session is created on — its binding, else the backend passed
+  in — so a change to the configured default never touches a bound slot's pin,
+  and `GET /api/models?slot=` (`handlers.agents._resolve_model_backend`)
+  answers from the live provider, else from this binding, else the configured
+  backend, so the picker's vocabulary and the slot payload always agree.
+  A provider teardown still clears the live binding (`_on_provider_unbound`),
+  and the next turn then binds afresh. The binding is written by
   `chat_runner.bind_slot_to_session`, the one helper every path that creates a
   slot's session runs through — the real turn and the speculative eager spawn
   alike — which reads `conversation_backend(key)` onto the slot and pushes the

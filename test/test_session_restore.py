@@ -13,6 +13,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from kiro_crew.acp.types import ACP_BACKEND_CODEX, ACP_BACKEND_KIRO
 from kiro_crew.dashboard.chat import restore_recent_sessions
 from kiro_crew.dashboard.state import DashboardState
 from kiro_crew.history import ConversationLog
@@ -103,14 +104,12 @@ class TestRestoreRecentSessions:
         assert slot._dirty is False
         assert slot._resumed_count == 2
 
-    @pytest.mark.parametrize(
-        ("persisted_backend", "configured_backend"),
-        [("", "codex"), ("codex", "")],
-    )
-    def test_restart_does_not_restore_stale_backend_binding(
-        self, tmp_path, monkeypatch, persisted_backend, configured_backend
+    @pytest.mark.parametrize("persisted_backend", [ACP_BACKEND_KIRO, ACP_BACKEND_CODEX])
+    def test_restart_restores_the_conversation_backend_binding(
+        self, tmp_path, monkeypatch, persisted_backend
     ):
-        """History backend is process state, not a conversation pin."""
+        """The recorded harness governs the resumed session, not the configured
+        default — ``""`` IS kiro and must survive as a binding, not read as absent."""
         monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
         _write_session(
             tmp_path,
@@ -120,10 +119,55 @@ class TestRestoreRecentSessions:
         )
         (tmp_path / "dashboard_backend-switch.jsonl").touch()
         state = _make_state(tmp_path)
-        state.sessions.conversation_backend.return_value = configured_backend
 
         assert restore_recent_sessions(state, window_minutes=60) == 1
-        assert state._slots["backend-switch"].acp_backend is None
+        slot = state._slots["backend-switch"]
+        assert slot.acp_backend == persisted_backend
+        assert slot._dirty is False
+
+    @pytest.mark.parametrize("meta", [{}, {"acp_backend": 7}])
+    def test_restart_leaves_a_slot_that_recorded_no_backend_unbound(
+        self, tmp_path, monkeypatch, meta
+    ):
+        """No record (or a non-string one) means the configured default applies."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        _write_session(
+            tmp_path,
+            "dashboard_backend-none",
+            [{"role": "user", "content": "hello", "ts": "2026-03-23T10:00:00"}],
+            meta=meta,
+        )
+        (tmp_path / "dashboard_backend-none.jsonl").touch()
+        state = _make_state(tmp_path)
+
+        assert restore_recent_sessions(state, window_minutes=60) == 1
+        assert state._slots["backend-none"].acp_backend is None
+
+    def test_restart_degrades_an_unselectable_backend_and_says_so(self, tmp_path, monkeypatch):
+        """The one case where the next turn's harness switch and replay are
+        correct: the slot is left unbound, a pin the configured default cannot
+        run is dropped to inherit, and the chat says what will happen."""
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        _write_session(
+            tmp_path,
+            "dashboard_backend-gone",
+            [{"role": "user", "content": "hello", "ts": "2026-03-23T10:00:00"}],
+            meta={"acp_backend": "byo-harness", "model": "opus-4.8-1m"},
+        )
+        (tmp_path / "dashboard_backend-gone.jsonl").touch()
+        state = _make_state(tmp_path)
+
+        assert restore_recent_sessions(state, window_minutes=60) == 1
+        slot = state._slots["backend-gone"]
+        assert slot.acp_backend is None
+        assert slot.model == ""
+        notice = slot.messages[-1]
+        assert notice["role"] == "assistant"
+        assert "byo-harness" in notice["content"]
+        assert notice.get("meta", {}).get("kind") == "compaction"
+        # Dirty, so the next save drops the stale binding from the metadata
+        # line and a later restart does not repeat the notice.
+        assert slot._dirty is True
 
     def test_restores_mode_empty_by_default(self, tmp_path, monkeypatch):
         """Sessions without mode in metadata default to empty string."""
@@ -832,12 +876,9 @@ class TestRehydrateSlotFromHistory:
         assert state._slots["hot-slot"] is existing
         assert existing.title == "Original Title"
 
-    @pytest.mark.parametrize(
-        ("persisted_backend", "configured_backend"),
-        [("", "codex"), ("codex", "")],
-    )
-    def test_on_demand_rehydrate_does_not_restore_stale_backend_binding(
-        self, tmp_path, monkeypatch, persisted_backend, configured_backend
+    @pytest.mark.parametrize("persisted_backend", [ACP_BACKEND_KIRO, ACP_BACKEND_CODEX])
+    def test_on_demand_rehydrate_restores_the_conversation_backend_binding(
+        self, tmp_path, monkeypatch, persisted_backend
     ):
         monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
         _write_session(
@@ -849,11 +890,35 @@ class TestRehydrateSlotFromHistory:
         from kiro_crew.dashboard.chat import _rehydrate_slot_from_history
 
         state = _make_state(tmp_path)
-        state.sessions.conversation_backend.return_value = configured_backend
         slot = _rehydrate_slot_from_history(state, "backend-rehydrate")
 
         assert slot is not None
+        assert slot.acp_backend == persisted_backend
+        assert slot._dirty is False
+
+    def test_on_demand_rehydrate_degrades_an_unselectable_backend_and_says_so(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        _write_session(
+            tmp_path,
+            "dashboard_backend-gone",
+            [{"role": "user", "content": "hello", "ts": "2026-03-23T10:00:00"}],
+            meta={"acp_backend": "byo-harness", "model": "opus-4.8-1m"},
+        )
+        from kiro_crew.dashboard.chat import _rehydrate_slot_from_history
+
+        state = _make_state(tmp_path)
+        slot = _rehydrate_slot_from_history(state, "backend-gone")
+
+        assert slot is not None
         assert slot.acp_backend is None
+        assert slot.model == ""
+        notice = slot.messages[-1]
+        assert notice["role"] == "assistant"
+        assert "byo-harness" in notice["content"]
+        assert notice.get("meta", {}).get("kind") == "compaction"
+        assert slot._dirty is True
 
     def test_rehydrates_slot_with_metadata_and_messages(self, tmp_path, monkeypatch):
         """Rehydrate restores title, agent, model, memory_mode and message history

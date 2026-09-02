@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from kiro_crew.acp.types import ACP_BACKEND_CLAUDE, ACP_BACKEND_KIRO
+from kiro_crew.acp.types import ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX, ACP_BACKEND_KIRO
 from kiro_crew.dashboard import chat_handlers, chat_runner
 from kiro_crew.dashboard.chat_runner import (
     _eager_spawn,
@@ -411,7 +411,7 @@ class TestEagerSpawnBindsSlot:
 
     @pytest.mark.asyncio
     async def test_pin_survives_a_default_change_on_a_bound_slot(self):
-        """clear_unrunnable_slot_models skips bound slots — this slot must count."""
+        """clear_unrunnable_slot_models judges a bound slot against its own harness."""
         slot = _ChatSlot("t1")
         slot.model = "opus-4.8-1m"
         state = await self._spawn_on_claude(slot)
@@ -424,6 +424,16 @@ class TestEagerSpawnBindsSlot:
         slot.acp_backend = None
         assert chat_handlers.clear_unrunnable_slot_models(state, ACP_BACKEND_KIRO) == ["t1"]
         assert slot.model == ""
+
+    @pytest.mark.parametrize("binding", [ACP_BACKEND_CODEX, ACP_BACKEND_KIRO, None])
+    @pytest.mark.asyncio
+    async def test_passes_the_slot_binding_to_get_or_create(self, binding):
+        """A bound slot is re-created on its own harness, never the default."""
+        slot = _ChatSlot("t1")
+        slot.acp_backend = binding
+        state = await self._spawn_on_claude(slot)
+
+        assert state.sessions.get_or_create.await_args.kwargs["acp_backend"] == binding
 
     @pytest.mark.asyncio
     async def test_does_not_bind_a_session_it_tore_down(self, tmp_path):
