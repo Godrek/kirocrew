@@ -245,6 +245,35 @@ judgment half is the `harness-parity` rule in `AUTOSDE.yaml`.
 Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `ci`, `build`, `revert`.
 One logical change per commit.
 
+## Local runtime (this machine runs production from this checkout)
+
+The operator's production gateway is the systemd unit `kirocrew.service`, running
+`/home/operator/kirocrew/.venv/bin/kirocrew gateway` from THIS checkout on
+`personal`, as root, on port **5477** bound to `0.0.0.0` (CORS origin
+`http://192.168.69.5:5477`), with data home `/root/.kiro/crew` (the default;
+nothing overrides it) and `agent.acp_backend` set to `codex`. `systemctl cat
+kirocrew.service` is the source of truth for its environment.
+
+- **Use `./.venv/bin/python` explicitly.** The login shell's `python` resolves to a
+  different checkout under `/root/kirocrew`, so a bare `python -m pytest` or
+  `pip install` verifies or modifies the wrong tree while reporting success.
+- **A change reaches production only when staged and restarted.** Backend edits
+  load on `systemctl restart kirocrew.service`, which drops every live chat turn,
+  so restart only when the operator asks. Frontend edits reach the dashboard only
+  after `make frontend` (or `npm run build` in `website/` followed by copying
+  `website/dist` over `src/kiro_crew/static/dist`); `npm run build` alone changes
+  nothing the gateway serves.
+- **Test on an isolated instance first.** `./dev-seed.sh` copies the real data home
+  into `.kirocrew-dev/` (gitignored); then `KIROCREW_HOME=.kirocrew-dev
+  KIROCREW_PORT=6777 KIROCREW_BIND=0.0.0.0 ./.venv/bin/kirocrew gateway` serves the
+  same checkout without touching production. Sign in with `KIROCREW_HOME=.kirocrew-dev
+  KIROCREW_PORT=6777 ./.venv/bin/kirocrew token --ttl 12h`: reuse only the token
+  value (the printed host and port are the configured public URL), and open it
+  within five minutes, which is the access token's life regardless of `--ttl`.
+- The harness binaries are `kiro-cli` at `/root/.local/bin/kiro-cli` and
+  `claude-agent-acp` / `codex-acp` under `/root/.nvm/versions/node/v22.23.2/bin`;
+  the unit's `PATH` puts the venv and that Node bin dir first.
+
 ## Release Changelog
 
 > **Releasing or promoting a version? Read `docs/build/release.md` first.** It is
