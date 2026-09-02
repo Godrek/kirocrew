@@ -216,8 +216,25 @@ judgment half is the `harness-parity` rule in `AUTOSDE.yaml`.
 - Do NOT proactively `git commit`. Commit only when asked.
 - Do NOT `git push` unless the user explicitly says to push. Being asked to commit
   is NOT permission to push.
-- `main` is the default branch; changes land through a GitHub PR. Full flow:
-  [CONTRIBUTING.md](CONTRIBUTING.md).
+- **This is a fork with two branches that mean different things.** `main` is a
+  byte-for-byte mirror of `upstream/main` (`kirodotdev/KiroCrew`, remote
+  `upstream`); it is force-reset to upstream on every sync and never receives fork
+  work. `personal` carries every fork commit, linear, on top of the fork point,
+  and both local gateways run from it. Base a fork PR on `personal` and merge it
+  by rebase (no merge commits), so the diff against upstream is always exactly the
+  commits on `personal`. Upstream's own PR flow: [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Sync** = `git fetch upstream && git checkout main && git merge --ff-only
+  upstream/main && git push origin main`, then `git checkout personal && git rebase
+  main && git push --force-with-lease origin personal`.
+- **The next sync is a port, not a rebase.** `personal` sits on a fork point
+  upstream has moved far past, and upstream now owns the seams the fork's commits
+  hardcoded: backends register through `src/kiro_crew/acp_backends.py`
+  (`register_selectable_backend`; `agent.acp_backend` deliberately has no enum),
+  Claude Code is already selectable, a developer-tab backend switcher exists, and
+  `AgentConfig` lives in `config/sections.py`. Re-derive each commit onto those
+  seams (register Codex through the registry, keep upstream's switcher, re-port the
+  per-backend model vocabulary) instead of resolving hunks; a mechanical rebase
+  restores the enum and duplicates the switcher, and every later sync re-conflicts.
 
 ```
 <type>: <summary — max 72 chars, imperative, lowercase, no period>
