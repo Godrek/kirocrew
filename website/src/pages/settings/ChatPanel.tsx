@@ -5,7 +5,7 @@ import { loadChatConfig, saveChatConfig, type ChatConfig, type ContentWidth, typ
 import { api } from '../../api/client'
 import { useAvailableModels } from '../../hooks/useAvailableModels'
 import { useModelCapabilities } from '../../hooks/useModelCapabilities'
-import { ACP_BACKEND_OPTIONS, isKiroModelFamily, type AcpBackend } from '../../providers/acpBackends'
+import { ACP_BACKEND_OPTIONS, acpBackendLabel, isKiroModelFamily, type AcpBackend } from '../../providers/acpBackends'
 import { EFFORT_LEVELS, effortLabel, modelSupportsEffort } from '../../lib/effort'
 import { isMac } from '../../utils/platform'
 import { capRoleOther, clampRoleOther } from '../../lib/userProfile'
@@ -201,12 +201,6 @@ export function ChatPanel() {
   const backendOptions = ACP_BACKEND_OPTIONS.includes(acpBackend as AcpBackend)
     ? [...ACP_BACKEND_OPTIONS]
     : [...ACP_BACKEND_OPTIONS, acpBackend]
-  const unsupportedBackendLabel = i18nT('pages.settings.chatPanel.backend_external', { backend: acpBackend })
-  const backendLabels = [
-    i18nT('pages.settings.chatPanel.backend_kiro_cli'),
-    i18nT('pages.settings.chatPanel.backend_claude_code'),
-    i18nT('pages.settings.chatPanel.backend_codex'),
-  ]
   const backendMut = useMutation({
     mutationFn: (v: string) => api.patchConfig('agent.acp_backend', v),
     onSuccess: () => {
@@ -396,9 +390,9 @@ export function ChatPanel() {
   // never reads — a save that reports success and changes nothing.
   const isKiroBackend = isKiroModelFamily(acpBackend)
   const backendCaps = useModelCapabilities({ backend: acpBackend, enabled: !isKiroBackend })
-  const backendDisplayName = ACP_BACKEND_OPTIONS.includes(acpBackend as AcpBackend)
-    ? backendLabels[ACP_BACKEND_OPTIONS.indexOf(acpBackend as AcpBackend)]
-    : unsupportedBackendLabel
+  // One resolver, shared with the composer's per-slot harness control, so the
+  // two surfaces cannot name the same harness differently.
+  const backendDisplayName = acpBackendLabel(acpBackend)
   const backendAvailableModels = useAvailableModels({
     backend: acpBackend,
     enabled: !isKiroBackend && backendCaps.selectable,
@@ -528,9 +522,7 @@ export function ChatPanel() {
             hint={i18nT('pages.settings.chatPanel.agent_backend_new_sessions_hint')}
             value={acpBackend}
             options={backendOptions}
-            optionLabels={backendOptions.map((_, index) =>
-              index < backendLabels.length ? backendLabels[index] : unsupportedBackendLabel
-            )}
+            optionLabels={backendOptions.map(option => acpBackendLabel(option))}
             onChange={v => backendMut.mutate(v)}
             disabled={!mcQ.isSuccess || backendMut.isPending}
             configKey="agent.acp_backend"

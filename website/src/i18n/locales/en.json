@@ -4001,7 +4001,8 @@
       "turn_interrupted_press_continue": "Last turn was interrupted — press Resume, or just type",
       "upload_file": "Upload file",
       "use_a_skill": "Use a skill",
-      "used": "Used"
+      "used": "Used",
+      "backend": "Backend: {{name}}"
     },
     "chatPane": {
       "agent_list": "Agent list",
@@ -5195,6 +5196,11 @@
       "install_teaser_hint": "needs Tailscale",
       "no_peers": "No other device has joined this Tailscale network yet, so nothing can open this address. Install Tailscale on your phone and sign in with the same account.",
       "peers_offline": "Your other devices have joined this network but none is online right now, so the address will not load until one connects."
+    },
+    "backendDropdown": {
+      "backend_selector": "Backend selector",
+      "backend_list": "Backend list",
+      "applies_to_this_chat_only": "Applies to this chat. New chats start on the default backend."
     }
   },
   "hooks": {
@@ -6064,7 +6070,17 @@
       "toggle_sessions": "Toggle sessions",
       "tokens": "tokens",
       "type_to_filter": "Type to filter…",
-      "what_can_i_do_for_you": "What can I do for you?"
+      "what_can_i_do_for_you": "What can I do for you?",
+      "stop_the_current_response_to_switch_backend": "Stop the current response to switch backend",
+      "wait_for_the_stop_to_finish_to_switch_backend": "Wait for the stop to finish to switch backend",
+      "answer_the_pending_approval_to_switch_backend": "Answer the pending approval to switch backend",
+      "wait_for_the_plan_to_finish_to_switch_backend": "Wait for the plan to finish to switch backend",
+      "wait_for_subagents_to_finish_to_switch_backend": "Wait for sub-agents to finish to switch backend",
+      "switch_this_chat_to_the_backend": "Switch this chat to the {{backend}} backend?",
+      "switch_backend_replays_the_conversation": "This starts a new session on {{backend}}. The conversation so far is replayed into it.",
+      "switch_backend_replays_and_drops_the_model": "This starts a new session on {{backend}}. The conversation so far is replayed into it, and the model {{model}} is not available there.",
+      "switch_to_backend_action": "Switch to {{backend}}",
+      "backend_switch_dropped_the_model_pin": "The model {{model}} is not available on {{backend}}, so this chat's model pin was dropped."
     },
     "chatSidebar": {
       "add_column_after_this_one": "Add column after this one",

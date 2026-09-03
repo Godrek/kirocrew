@@ -19,6 +19,8 @@
  * nothing here to keep in sync with the harness list.
  */
 
+import { i18nT } from '../i18n/t'
+
 /** The ACP backends this build knows by name. `''` IS kiro-cli, not "unset".
  *
  *  `kas` is here but NOT in `ACP_BACKEND_OPTIONS`: this edition does not offer
@@ -27,9 +29,23 @@
  *  silently answers wrong for. */
 export type AcpBackend = '' | 'kas' | 'claude' | 'codex'
 
+/** The ids, named. `''` is a legitimate backend, so a call site that spells it
+ *  as a bare literal reads as "unset" to the next person and is invisible to a
+ *  grep for the harness. Identity is compared against these — positively, never
+ *  as `!== ''` or "not the other one", which is the frontend spelling of the
+ *  negative-identity rule the server-side capability sets exist to enforce. */
+export const ACP_BACKEND_KIRO: AcpBackend = ''
+export const ACP_BACKEND_KAS: AcpBackend = 'kas'
+export const ACP_BACKEND_CLAUDE: AcpBackend = 'claude'
+export const ACP_BACKEND_CODEX: AcpBackend = 'codex'
+
 /** The backends the settings dropdown OFFERS. A persisted value outside this
  *  list is appended by the panel rather than dropped. */
-export const ACP_BACKEND_OPTIONS: AcpBackend[] = ['', 'claude', 'codex']
+export const ACP_BACKEND_OPTIONS: AcpBackend[] = [
+  ACP_BACKEND_KIRO,
+  ACP_BACKEND_CLAUDE,
+  ACP_BACKEND_CODEX,
+]
 
 /** Backends sharing kiro-cli's model namespace and configuration.
  *
@@ -38,7 +54,7 @@ export const ACP_BACKEND_OPTIONS: AcpBackend[] = ['', 'claude', 'codex']
  *  reads the same `agent.model` — the server's `model_for_backend` says so, and
  *  a frontend that tested `backend === ''` instead would write a KAS user's pick
  *  to a config key the server never reads. */
-export const KIRO_MODEL_FAMILY: readonly AcpBackend[] = ['', 'kas']
+export const KIRO_MODEL_FAMILY: readonly AcpBackend[] = [ACP_BACKEND_KIRO, ACP_BACKEND_KAS]
 
 /** Whether `backend` resolves its model through `agent.model` (the kiro family)
  *  rather than its own `agent.backend_models` entry.
@@ -58,7 +74,12 @@ export function isKiroModelFamily(backend: string | undefined): boolean {
  *  Every backend this build can encounter, not just the offered ones: one
  *  shared cache entry would let the last backend to fetch decide what every
  *  picker serves on the next cold start. */
-export const MODEL_CACHE_BACKENDS: AcpBackend[] = ['', 'kas', 'claude', 'codex']
+export const MODEL_CACHE_BACKENDS: AcpBackend[] = [
+  ACP_BACKEND_KIRO,
+  ACP_BACKEND_KAS,
+  ACP_BACKEND_CLAUDE,
+  ACP_BACKEND_CODEX,
+]
 
 /** Where a backend's picker options come from (`catalog` below). */
 export type ModelCatalogSource =
@@ -167,7 +188,66 @@ const KAS_COLD_START_CAPABILITIES: ModelCapabilities = {
  *   rejects.
  */
 export function coldStartCapabilities(backend: string | undefined): ModelCapabilities {
-  if (backend === '') return KIRO_COLD_START_CAPABILITIES
-  if (backend === 'kas') return KAS_COLD_START_CAPABILITIES
+  if (backend === ACP_BACKEND_KIRO) return KIRO_COLD_START_CAPABILITIES
+  if (backend === ACP_BACKEND_KAS) return KAS_COLD_START_CAPABILITIES
   return UNKNOWN_MODEL_CAPABILITIES
+}
+
+/** What to CALL a harness in the UI.
+ *
+ *  One resolver, shared by Settings ▸ Chat and the composer's backend control,
+ *  so the two surfaces cannot name the same harness differently. Kiro's id is
+ *  the empty string, so a surface that rendered the id would print a blank
+ *  where the harness belongs.
+ *
+ *  A backend outside the offered set still gets a name rather than nothing: a
+ *  config written by hand (or by an edition) can persist one, and the control
+ *  has to be able to say what the slot is on before it can offer to move it. */
+export function acpBackendLabel(backend: string): string {
+  if (backend === ACP_BACKEND_KIRO) return i18nT('pages.settings.chatPanel.backend_kiro_cli')
+  if (backend === ACP_BACKEND_CLAUDE) return i18nT('pages.settings.chatPanel.backend_claude_code')
+  if (backend === ACP_BACKEND_CODEX) return i18nT('pages.settings.chatPanel.backend_codex')
+  return i18nT('pages.settings.chatPanel.backend_external', { backend })
+}
+
+/**
+ * The harness a slot's next session runs on: the slot's OWN binding, and the
+ * configured default only for a slot that has never been bound.
+ *
+ * The asymmetry is the whole point, and it is the server's
+ * (`_slot_backend` / `resolve_session_backend`): `agent.acp_backend` is the
+ * default for a slot with no binding of its own, never an override of one that
+ * has. So `??`, never `||` — `''` IS the kiro harness, and a truthiness test
+ * would read a slot deliberately bound to kiro as unbound and hand it whatever
+ * the default happens to say.
+ *
+ * One helper because the answer feeds a query KEY (the model list and the
+ * capability answer are both scoped by it). Three private copies of the same
+ * coalesce is how one surface ends up asking about a harness the session is not
+ * on, and the failure is silent: it renders another harness's model vocabulary.
+ */
+export function resolveSlotBackend(
+  slotBackend: string | null | undefined,
+  configuredBackend: string | null | undefined,
+): string {
+  return slotBackend ?? configuredBackend ?? ACP_BACKEND_KIRO
+}
+
+/** `POST /api/chat/slots/{slot}/backend` — the outcome of moving one slot.
+ *
+ *  `changed` is whether the harness the next session is created on moved;
+ *  `reset` is whether a conversation was discarded and will be replayed onto
+ *  the new harness; `model_cleared` reports a dropped model pin, with `model`
+ *  carrying what the slot holds afterwards (empty = inherit whatever the
+ *  backend serves). The pin is dropped rather than translated — the
+ *  vocabularies are disjoint — but never silently, which is what
+ *  `model_cleared` is for. */
+export interface SlotBackendResult {
+  ok?: boolean
+  slot?: string
+  backend: string
+  changed: boolean
+  reset: boolean
+  model_cleared: boolean
+  model: string
 }

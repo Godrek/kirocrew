@@ -536,6 +536,16 @@ this may discard. They run unconditionally, not only on the teardown path:
 whether the slot holds a conversation is not the caller's to know, so the answer
 must not depend on it.
 
+The dashboard calls it from the composer, immediately left of the model
+control: the chip names the harness through `resolveSlotBackend` (the slot's own
+binding, the configured default only for a slot that has never been bound — the
+same asymmetry, in one frontend helper so the chat surfaces cannot answer
+differently) and the dropdown offers exactly
+`ACP_BACKENDS_DASHBOARD_SELECTABLE`. It mirrors the 409 guards below as a
+disabled state with the reason on the chip, and it asks BEFORE switching a slot
+that holds turns — the conversation is discarded and replayed, which is not
+something to report afterwards. A slot with no turns switches with no dialog.
+
 The response is `{"ok", "slot", "backend", "changed", "reset", "model_cleared",
 "model"}`. `changed` is whether the harness the next session is created on moved;
 `reset` is whether a conversation was discarded (and therefore replayed).

@@ -28,7 +28,7 @@ import {
 import { beginArtifactWrite, endArtifactWrite } from '../lib/artifactWrites'
 import { installApiTransport } from './apiTransport'
 import type { SessionSummary } from '../types/sessionSummary'
-import type { ModelCapabilities, ModelSwitchScope } from '../providers/acpBackends'
+import type { ModelCapabilities, ModelSwitchScope, SlotBackendResult } from '../providers/acpBackends'
 import { queryClient } from './queryClient'
 import { getStoredConsent } from '../utils/themeConsent'
 import { recordError, parseErrorCode, requestPath } from '../utils/errorReport'
@@ -2257,6 +2257,20 @@ export const api = {
    *  picker promises "applies to your next session" and then restarts the chat. */
   chatSlotModel: (slot: string, model: string, scope?: ModelSwitchScope) =>
     post('/api/chat/slots/' + encodeURIComponent(slot) + '/model', { model, ...(scope ? { scope } : {}) }).then(j) as Promise<{ ok?: boolean; model?: string; scope?: ModelSwitchScope }>,
+  /** Set the HARNESS this slot runs on.
+   *
+   *  `backend` is sent as a key that is always present, never conditionally:
+   *  `''` IS the kiro harness, so the server reads the body by PRESENCE, and
+   *  omitting the key for kiro would be refused as `backend_missing` rather
+   *  than understood as "kiro".
+   *
+   *  There is no scope here and there must not be one — a running ACP
+   *  conversation cannot be moved between harnesses. A slot that holds one has
+   *  it discarded and replayed onto the new harness (`reset: true`), which is
+   *  why the caller asks first. Rejects with an `ApiError` carrying the
+   *  server's `code` (`slot_stopping`, `turn_in_flight`, …) on a refusal. */
+  chatSlotBackend: (slot: string, backend: string) =>
+    post('/api/chat/slots/' + encodeURIComponent(slot) + '/backend', { backend }).then(j) as Promise<SlotBackendResult>,
   chatSlotsModel: (model: string, skip_running: boolean) =>
     post('/api/chat/slots/model', { model, skip_running }).then(j) as Promise<{ ok: boolean; model: string; switched: string[]; skipped_running: string[]; unchanged: string[]; failed: string[] }>,
   chatSlotReasoningEffort: (slot: string, reasoning_effort: string) =>

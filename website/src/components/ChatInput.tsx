@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useId, memo } from 'react'
-import { ArrowUpFromLine, ArrowUp, Loader2, RotateCw, Plus, Crop, Bot, Mic, Keyboard, Square, BookOpen, X, ClipboardList, CheckCircle, Ban, Sparkles, Target, Lock, Folder, FolderOpen, FileText } from 'lucide-react'
+import { ArrowUpFromLine, ArrowUp, Loader2, RotateCw, Plus, Crop, Bot, Cpu, Mic, Keyboard, Square, BookOpen, X, ClipboardList, CheckCircle, Ban, Sparkles, Target, Lock, Folder, FolderOpen, FileText } from 'lucide-react'
 import CopyBranchButton from './CopyBranchButton'
 import { usePointerDrag } from '../hooks/usePointerDrag'
 import { useScrollEdges } from '../hooks/useScrollEdges'
@@ -394,8 +394,18 @@ interface ChatInputProps {
   agentName?: string
   agentSource?: string
   modelName?: string
+  /** The harness this chat runs on, already labelled and translated. Absent
+   *  hides the control — a surface with no harness answer must show no chip
+   *  rather than guess kiro, whose id is the empty string. */
+  backendName?: string
   onAgentClick?: (rect: DOMRect) => void
   onModelClick?: (rect: DOMRect) => void
+  onBackendClick?: (rect: DOMRect) => void
+  /** Why the harness cannot be changed right now, already translated. Present
+   *  means disabled, and the string IS the tooltip: the server refuses the same
+   *  states with a 409, so naming the reason here is what keeps a user from
+   *  discovering the guard as a failed request. */
+  backendDisabledReason?: string
   onProjectClick?: (rect: DOMRect) => void
   contextPct?: number
   contextUsedTokens?: number
@@ -751,8 +761,11 @@ function ChatInput({
   agentName,
   agentSource,
   modelName,
+  backendName,
   onAgentClick,
   onModelClick,
+  onBackendClick,
+  backendDisabledReason,
   onProjectClick,
   contextPct,
   contextUsedTokens,
@@ -3521,7 +3534,7 @@ function ChatInput({
       </AnimatePresence>
 
       {/* Context shelf — plain full-width row below input */}
-      {!showGhost && (onProjectClick || (onModelClick && modelName)) && (
+      {!showGhost && (onProjectClick || (onModelClick && modelName) || (onBackendClick && backendName)) && (
         <div ref={shelfRef} className="pt-1 flex items-center gap-2 min-w-0">
           <div className="flex items-center gap-2 min-w-0 flex-1">
           {onAgentClick && agentName && (
@@ -3625,6 +3638,25 @@ function ChatInput({
             </div>
             )
           })()}
+          {onBackendClick && backendName && (
+            /* The harness sits immediately left of the model, because it is the
+               question the model answer depends on: the vocabularies are
+               disjoint, so reading the model without knowing the harness it
+               belongs to is what makes a pick look wrong. Disabled state is
+               driven by an explicit REASON rather than `isRunning`: the server
+               refuses a switch in five distinct states, and a bare disabled
+               chip would leave four of them unexplained. */
+            <button
+              className="inline-flex items-center gap-1.5 h-7 min-w-0 text-[12px] text-muted hover:text-text px-2 rounded-md bg-transparent hover:bg-[color-mix(in_srgb,var(--bg-elevated)_84%,var(--text))] transition-colors border-none cursor-pointer disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted"
+              onClick={e => onBackendClick(e.currentTarget.getBoundingClientRect())}
+              disabled={!!backendDisabledReason}
+              title={backendDisabledReason || i18nT('components.chatInput.backend', { name: backendName })}
+              aria-label={backendDisabledReason || i18nT('components.chatInput.backend', { name: backendName })}
+            >
+              <Cpu className="lucide-inline shrink-0 opacity-70" />
+              {!shelfCompact && <span className="truncate max-w-[120px]">{backendName}</span>}
+            </button>
+          )}
           {onModelClick && modelName && (
             <button
               className="inline-flex items-center gap-1.5 h-7 min-w-0 text-[12px] text-muted hover:text-text px-2 rounded-md bg-transparent hover:bg-[color-mix(in_srgb,var(--bg-elevated)_84%,var(--text))] transition-colors border-none cursor-pointer disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted"

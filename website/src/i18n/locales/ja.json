@@ -5266,7 +5266,8 @@
       "used": "使用済み",
       "voice_input": "音声入力",
       "finishing": "処理中…",
-      "keep_holding_to_record": "押したままで録音"
+      "keep_holding_to_record": "押したままで録音",
+      "backend": "バックエンド: {{name}}"
     },
     "chatPane": {
       "agent_list": "エージェントリスト",
@@ -7346,6 +7347,11 @@
       "status_running": "処理中",
       "status_unread": "未読",
       "tab_name_with_status": "{{name}} — {{status}}"
+    },
+    "backendDropdown": {
+      "backend_selector": "バックエンドセレクター",
+      "backend_list": "バックエンド一覧",
+      "applies_to_this_chat_only": "このチャットにのみ適用されます。新しいチャットは既定のバックエンドで開始します。"
     }
   },
   "hooks": {
@@ -8855,7 +8861,17 @@
       "what_can_i_do_for_you": "何をお手伝いしましょうか？",
       "worktree_creation_returned_no_path": "ワークツリーの作成結果にパスがありません",
       "loading_earlier_messages": "以前のメッセージを読み込み中…",
-      "send_failed_with_error": "送信に失敗しました: {{error}}"
+      "send_failed_with_error": "送信に失敗しました: {{error}}",
+      "stop_the_current_response_to_switch_backend": "バックエンドを切り替えるには現在の応答を停止してください",
+      "wait_for_the_stop_to_finish_to_switch_backend": "バックエンドを切り替えるには停止の完了を待ってください",
+      "answer_the_pending_approval_to_switch_backend": "バックエンドを切り替えるには保留中の承認に応答してください",
+      "wait_for_the_plan_to_finish_to_switch_backend": "バックエンドを切り替えるにはプランの完了を待ってください",
+      "wait_for_subagents_to_finish_to_switch_backend": "バックエンドを切り替えるにはサブエージェントの完了を待ってください",
+      "switch_this_chat_to_the_backend": "このチャットを {{backend}} バックエンドに切り替えますか？",
+      "switch_backend_replays_the_conversation": "{{backend}} で新しいセッションを開始します。これまでの会話はそのセッションに再生されます。",
+      "switch_backend_replays_and_drops_the_model": "{{backend}} で新しいセッションを開始します。これまでの会話はそのセッションに再生され、モデル {{model}} はそこでは利用できません。",
+      "switch_to_backend_action": "{{backend}} に切り替える",
+      "backend_switch_dropped_the_model_pin": "モデル {{model}} は {{backend}} で利用できないため、このチャットのモデル固定は解除されました。"
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 件を除外 — 現在選択中)",

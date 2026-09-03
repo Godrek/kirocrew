@@ -5452,7 +5452,8 @@
       "used": "Usado",
       "voice_input": "Entrada de voz",
       "finishing": "Finalizando…",
-      "keep_holding_to_record": "Mantén pulsado para grabar"
+      "keep_holding_to_record": "Mantén pulsado para grabar",
+      "backend": "Backend: {{name}}"
     },
     "chatPane": {
       "agent_list": "Lista de agentes",
@@ -7566,6 +7567,11 @@
       "status_running": "trabajando",
       "status_unread": "sin leer",
       "tab_name_with_status": "{{name}} — {{status}}"
+    },
+    "backendDropdown": {
+      "backend_selector": "Selector de backend",
+      "backend_list": "Lista de backends",
+      "applies_to_this_chat_only": "Se aplica solo a este chat. Los chats nuevos empiezan en el backend predeterminado."
     }
   },
   "hooks": {
@@ -9129,7 +9135,17 @@
       "what_can_i_do_for_you": "¿Qué puedo hacer por ti?",
       "worktree_creation_returned_no_path": "La creación del worktree no devolvió ninguna ruta",
       "loading_earlier_messages": "Cargando mensajes anteriores…",
-      "send_failed_with_error": "Error al enviar: {{error}}"
+      "send_failed_with_error": "Error al enviar: {{error}}",
+      "stop_the_current_response_to_switch_backend": "Detén la respuesta actual para cambiar de backend",
+      "wait_for_the_stop_to_finish_to_switch_backend": "Espera a que termine la detención para cambiar de backend",
+      "answer_the_pending_approval_to_switch_backend": "Responde a la aprobación pendiente para cambiar de backend",
+      "wait_for_the_plan_to_finish_to_switch_backend": "Espera a que termine el plan para cambiar de backend",
+      "wait_for_subagents_to_finish_to_switch_backend": "Espera a que terminen los subagentes para cambiar de backend",
+      "switch_this_chat_to_the_backend": "¿Cambiar este chat al backend {{backend}}?",
+      "switch_backend_replays_the_conversation": "Esto inicia una sesión nueva en {{backend}}. La conversación actual se reproduce en ella.",
+      "switch_backend_replays_and_drops_the_model": "Esto inicia una sesión nueva en {{backend}}. La conversación actual se reproduce en ella, y el modelo {{model}} no está disponible allí.",
+      "switch_to_backend_action": "Cambiar a {{backend}}",
+      "backend_switch_dropped_the_model_pin": "El modelo {{model}} no está disponible en {{backend}}, así que se descartó el modelo fijado de este chat."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 omitida — seleccionada actualmente)",

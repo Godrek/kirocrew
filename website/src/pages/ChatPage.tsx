@@ -107,6 +107,9 @@ import {
   DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
 } from '../components/ui/dropdown-menu'
 import ModelEffortDropdown from '../components/ModelEffortDropdown'
+import BackendDropdown from '../components/BackendDropdown'
+import { useConfirm } from '../components/ConfirmDialog'
+import { ACP_BACKEND_OPTIONS, acpBackendLabel, resolveSlotBackend } from '../providers/acpBackends'
 
 import ChatInput from '../components/ChatInput'
 import ErrorNotice from '../components/ErrorNotice'
@@ -766,6 +769,16 @@ function renderFileSegment(content: string, meta: Record<string, unknown> | unde
  *  equal value when the slot has no app renders (avoids useless re-renders). */
 const EMPTY_APP_ID_SET: ReadonlySet<string> = new Set()
 
+/** The harness rows, in the order the server offers them, shaped for
+ *  `useFilteredDropdown`. Ids only — the labels are resolved at render, so a
+ *  language change is not frozen into a module-level constant. */
+const BACKEND_DROPDOWN_ITEMS = ACP_BACKEND_OPTIONS.map(name => ({ name }))
+
+/** The one model id every harness serves: "let the backend choose". A pin
+ *  equal to it survives a harness change, so it is not something the switch
+ *  dialog can warn about losing. */
+const INHERIT_MODEL = 'auto'
+
 // Per-action titles for the refused-press notice above the composer. A press
 // added later gets its refusal surfaced by adding one entry here and calling
 // `showRefusedPress` from its catch — the `as const` map keeps every key
@@ -1134,8 +1147,10 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // The backend the ACTIVE slot is bound to. The configured value applies only
   // to a slot that has not started yet, so changing the default for new sessions
   // can never re-point a live session's picker at another harness's models.
-  const activeSlotBackend =
-    slots.find(s => s.key === activeSlot)?.acp_backend ?? acpBackend
+  const activeSlotBackend = resolveSlotBackend(
+    slots.find(s => s.key === activeSlot)?.acp_backend,
+    acpBackend,
+  )
   // What this backend can do — asked of the server, never inferred from which
   // backend it is. `slot` lets the server answer from the LIVE session, which is
   // the only place a per-adapter capability (does this build expose the model
@@ -1208,6 +1223,19 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // short-circuits `slot.model or agent_model` and would override a template or
   // global pin the user did configure.
   const [modelBtnRect, setModelBtnRect] = useState<DOMRect | null>(null)
+  // The harness control. `useFilteredDropdown` is reused for its open/close and
+  // click-outside contract only — the offered set is three closed rows, so its
+  // filter half has nothing to filter and no input is rendered for it.
+  //
+  // The rows are exactly what the endpoint accepts (the dashboard-selectable
+  // set). A slot persisted onto a harness outside it is NOT added as a fourth
+  // row: the server would refuse the round trip. The chip still NAMES that
+  // harness, so such a slot can read where it is and move off it — which is the
+  // degrade-rather-than-strand rule, not a door onto an edition-only backend.
+  const { open: backendDropdown, setOpen: setBackendDropdown, dropdownRef: backendDropdownRef } =
+    useFilteredDropdown(BACKEND_DROPDOWN_ITEMS)
+  const [backendBtnRect, setBackendBtnRect] = useState<DOMRect | null>(null)
+  const { confirm: confirmBackendSwitch, confirmDialog: backendConfirmDialog } = useConfirm()
   // Mid-turn steer is a POST write, so it goes through useMutation for
   // consistent error/loading-state handling (fire-and-forget: no onSuccess).
   const steerMutation = useMutation({
@@ -4707,6 +4735,92 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // One source for both same-meaning markers in the agent pop-up: the row's check and
   // the default-agent row's label. Reading the slot twice let them disagree.
   const activeAgentName = currentSlot?.agent || 'default'
+
+  // Why the harness cannot be changed right now, or '' when it can. These are
+  // the SERVER's own guards (`_slot_teardown_denied`, plus this route's
+  // stopping and approval checks): the switch may discard the session, so every
+  // state that owns work in flight refuses it with a 409. Mirroring them means
+  // the user reads the reason on the chip instead of discovering it as a failed
+  // request. Membership decides whether it is disabled; the ORDER only decides
+  // which reason is the most specific one to show — a slot that is stopping is
+  // also still running, and "wait for the stop" is the more useful sentence.
+  const backendDisabledReason = useMemo(() => {
+    if (!currentSlot) return ''
+    if (slotStopping || currentSlot.stopping) return i18nT('pages.chatPage.wait_for_the_stop_to_finish_to_switch_backend')
+    if (slotRunning || currentSlot.running) return i18nT('pages.chatPage.stop_the_current_response_to_switch_backend')
+    if (currentSlot.pending_approval) return i18nT('pages.chatPage.answer_the_pending_approval_to_switch_backend')
+    if (currentSlot.orchestrating) return i18nT('pages.chatPage.wait_for_the_plan_to_finish_to_switch_backend')
+    if (currentSlot.subagents_running) return i18nT('pages.chatPage.wait_for_subagents_to_finish_to_switch_backend')
+    return ''
+  }, [currentSlot, slotRunning, slotStopping])
+
+  /** Move this chat onto another harness.
+   *
+   *  There is no live-session scope and there cannot be one: a running ACP
+   *  conversation cannot be moved between harnesses, so a slot that holds one
+   *  has it discarded and REPLAYED onto the target. That is a fact about the
+   *  conversation the user is looking at, so it is stated before the call, not
+   *  reported after it. A slot with no turns loses nothing and is switched
+   *  straight away — a dialog there would be a confirmation of nothing.
+   */
+  const switchBackend = useCallback(async (backend: string) => {
+    setBackendDropdown(false)
+    const slotKey = activeSlot
+    if (!slotKey) return
+    const slot = slots.find(s => s.key === slotKey)
+    if (backend === resolveSlotBackend(slot?.acp_backend, acpBackend)) return
+    // Captured BEFORE the await: the dialog is non-blocking, so the store can
+    // move underneath it and the sentence the user agreed to must be the one
+    // this call acts on.
+    const targetLabel = acpBackendLabel(backend)
+    const hasConversation = (slot?.messages ?? 0) > 0
+    // The offered harnesses have disjoint vocabularies, so any real pin is
+    // dropped by the move. `auto` (and an unset model) is the absence of a
+    // pick, which every harness honours, so it is not something to warn about.
+    const pin = slot?.model && slot.model !== INHERIT_MODEL ? slot.model : ''
+    if (hasConversation) {
+      const agreed = await confirmBackendSwitch({
+        title: i18nT('pages.chatPage.switch_this_chat_to_the_backend', { backend: targetLabel }),
+        body: pin
+          ? i18nT('pages.chatPage.switch_backend_replays_and_drops_the_model', { backend: targetLabel, model: pin })
+          : i18nT('pages.chatPage.switch_backend_replays_the_conversation', { backend: targetLabel }),
+        confirmLabel: i18nT('pages.chatPage.switch_to_backend_action', { backend: targetLabel }),
+      })
+      if (!agreed) return
+    }
+    try {
+      const result = await api.chatSlotBackend(slotKey, backend)
+      // Written to the store immediately rather than awaited on the server's
+      // slots rebroadcast: that push is coalesced and never arrives with the
+      // websocket down, and this value is part of the QUERY KEY both model
+      // questions below are asked under.
+      dispatch(updateSlot({
+        key: slotKey,
+        acp_backend: result.backend,
+        // Only on the server's own report. A pin is never substituted, so the
+        // chip must not be re-pointed at some other id — it is cleared, which
+        // renders as "inherit whatever this harness serves".
+        ...(result.model_cleared ? { model: result.model ?? '' } : {}),
+      }))
+      // "Which models may this chat run" now has a different answer. Neither
+      // query goes stale on its own, and the capability answer additionally
+      // depends on a LIVE session that this call may have just replaced.
+      queryClient.invalidateQueries({ queryKey: ['available-models'] })
+      queryClient.invalidateQueries({ queryKey: ['model-capabilities'] })
+      if (result.model_cleared) {
+        dispatch(setAgentSwitchNotice(
+          i18nT('pages.chatPage.backend_switch_dropped_the_model_pin', { backend: targetLabel, model: pin }),
+        ))
+      }
+    } catch (e) {
+      // Same failure surface as the agent and model switches beside it: the
+      // shared notice, preferring the server's own message (which carries the
+      // refusal `code`). The chip keeps naming the harness actually in force.
+      dispatch(setAgentSwitchNotice(agentSwitchFailureMessage(e)))
+      // eslint-disable-next-line no-console -- surface switchBackend failures for debugging
+      console.error('switchBackend failed', e)
+    }
+  }, [activeSlot, slots, acpBackend, confirmBackendSwitch, dispatch, queryClient, setBackendDropdown])
   // Refs so the "run in terminal" listener (registered once) always sees the
   // live panel controller + this chat's working directory.
   const tabsCtlRef = useRef(tabsCtl); tabsCtlRef.current = tabsCtl
@@ -7679,8 +7793,15 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               agentName={currentSlot?.agent || 'default'}
               agentSource={installedAgents.find(a => a.name === (currentSlot?.agent || 'default'))?.source}
               modelName={shownModel}
+              // Named through the shared resolver, so the chip and Settings ▸
+              // Chat cannot disagree about what a harness is called. Rendered
+              // only for a real slot: with none there is no binding to show and
+              // nothing the control could write to.
+              backendName={activeSlot ? acpBackendLabel(activeSlotBackend) : undefined}
+              backendDisabledReason={backendDisabledReason}
               onAgentClick={provider.capabilities.agentTemplates ? (rect) => { setAgentBtnRect(rect); setAgentDropdown(!agentDropdown) } : undefined}
               onModelClick={modelCaps.selectable ? (rect) => { setModelBtnRect(rect); setModelDropdown(!modelDropdown) } : undefined}
+              onBackendClick={activeSlot ? (rect) => { setBackendBtnRect(rect); setBackendDropdown(!backendDropdown) } : undefined}
               onProjectClick={(rect) => {
                 setProjectBtnRect(rect)
                 setProjectPickerOpen(o => !o)
@@ -7835,6 +7956,20 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               </div>,
               document.body
             )}
+            {/* Backend dropdown portal — triggered from input bar */}
+            {backendDropdown && backendBtnRect && createPortal(
+              <BackendDropdown
+                anchorRect={backendBtnRect}
+                dropdownRef={backendDropdownRef}
+                backends={ACP_BACKEND_OPTIONS}
+                activeBackend={activeSlotBackend}
+                onSelect={switchBackend}
+              />,
+              document.body
+            )}
+            {/* Asks BEFORE the switch, because the switch is what destroys the
+                native session — after the fact there is nothing left to decline. */}
+            {backendConfirmDialog}
             {/* Model dropdown portal — triggered from input bar */}
             {modelCaps.selectable && modelDropdown && modelBtnRect && createPortal(
               <ModelEffortDropdown

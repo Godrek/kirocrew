@@ -110,7 +110,7 @@ import { FEATURE_REQUEST_PROMPT_FALLBACK } from './prompts/featureRequest'
 import { useKeyboardShortcuts, IS_MAC } from './hooks/useKeyboardShortcuts'
 import { useInstanceShortcuts } from './hooks/useInstanceShortcuts'
 import { useCommandPalette } from './hooks/useCommandPalette'
-import { coldStartCapabilities, type ModelCapabilities, type ModelSwitchScope } from './providers/acpBackends'
+import { coldStartCapabilities, resolveSlotBackend, type ModelCapabilities, type ModelSwitchScope } from './providers/acpBackends'
 import { modelCapabilitiesKey } from './hooks/useModelCapabilities'
 import { useProvider } from './providers/context'
 import { useAgents } from './hooks/useAgents'
@@ -1711,7 +1711,7 @@ export default function App() {
       .getQueryData<{ agent?: { acp_backend?: string } }>(['kirocrewConfig'])
       ?.agent?.acp_backend ?? ''
     const served = queryClient.getQueryData<ModelCapabilities>(
-      modelCapabilitiesKey({ slot: slotKey, coldStartBackend: bound ?? configured }),
+      modelCapabilitiesKey({ slot: slotKey, coldStartBackend: resolveSlotBackend(bound, configured) }),
     )
     const backend = bound ?? served?.backend
     const entries = queryClient.getQueriesData<{ name: string }[]>({

@@ -5359,7 +5359,8 @@
       "used": "ব্যবহৃত",
       "voice_input": "ভয়েস ইনপুট",
       "finishing": "সম্পন্ন হচ্ছে…",
-      "keep_holding_to_record": "রেকর্ড করতে চেপে ধরে রাখুন"
+      "keep_holding_to_record": "রেকর্ড করতে চেপে ধরে রাখুন",
+      "backend": "ব্যাকএন্ড: {{name}}"
     },
     "chatPane": {
       "agent_list": "এজেন্ট তালিকা",
@@ -7456,6 +7457,11 @@
       "status_running": "কাজ চলছে",
       "status_unread": "অপঠিত",
       "tab_name_with_status": "{{name}} — {{status}}"
+    },
+    "backendDropdown": {
+      "backend_selector": "ব্যাকএন্ড নির্বাচক",
+      "backend_list": "ব্যাকএন্ড তালিকা",
+      "applies_to_this_chat_only": "এটি শুধু এই চ্যাটে প্রযোজ্য। নতুন চ্যাট ডিফল্ট ব্যাকএন্ডে শুরু হয়।"
     }
   },
   "hooks": {
@@ -8992,7 +8998,17 @@
       "what_can_i_do_for_you": "আপনার জন্য কী করতে পারি?",
       "worktree_creation_returned_no_path": "worktree তৈরি করে কোনো পাথ ফেরত আসেনি",
       "loading_earlier_messages": "পূর্ববর্তী বার্তা লোড হচ্ছে…",
-      "send_failed_with_error": "পাঠানো যায়নি: {{error}}"
+      "send_failed_with_error": "পাঠানো যায়নি: {{error}}",
+      "stop_the_current_response_to_switch_backend": "ব্যাকএন্ড বদলাতে বর্তমান উত্তরটি থামান",
+      "wait_for_the_stop_to_finish_to_switch_backend": "ব্যাকএন্ড বদলাতে থামানো শেষ হওয়া পর্যন্ত অপেক্ষা করুন",
+      "answer_the_pending_approval_to_switch_backend": "ব্যাকএন্ড বদলাতে অপেক্ষমাণ অনুমোদনের উত্তর দিন",
+      "wait_for_the_plan_to_finish_to_switch_backend": "ব্যাকএন্ড বদলাতে পরিকল্পনা শেষ হওয়া পর্যন্ত অপেক্ষা করুন",
+      "wait_for_subagents_to_finish_to_switch_backend": "ব্যাকএন্ড বদলাতে সাব-এজেন্টগুলি শেষ হওয়া পর্যন্ত অপেক্ষা করুন",
+      "switch_this_chat_to_the_backend": "এই চ্যাটটি {{backend}} ব্যাকএন্ডে বদলাবেন?",
+      "switch_backend_replays_the_conversation": "এটি {{backend}}-এ একটি নতুন সেশন শুরু করে। এতদূর পর্যন্ত কথোপকথন সেখানে পুনরায় চালানো হয়।",
+      "switch_backend_replays_and_drops_the_model": "এটি {{backend}}-এ একটি নতুন সেশন শুরু করে। এতদূর পর্যন্ত কথোপকথন সেখানে পুনরায় চালানো হয়, এবং {{model}} মডেলটি সেখানে উপলব্ধ নয়।",
+      "switch_to_backend_action": "{{backend}}-এ বদলান",
+      "backend_switch_dropped_the_model_pin": "{{model}} মডেলটি {{backend}}-এ উপলব্ধ নয়, তাই এই চ্যাটের মডেল পিন সরানো হয়েছে।"
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1টি এড়িয়ে যাওয়া হয়েছে — এখন বেছে নেওয়া আছে)",

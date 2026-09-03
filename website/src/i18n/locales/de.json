@@ -5359,7 +5359,8 @@
       "used": "Verbraucht",
       "voice_input": "Spracheingabe",
       "finishing": "Wird beendet…",
-      "keep_holding_to_record": "Zum Aufnehmen halten"
+      "keep_holding_to_record": "Zum Aufnehmen halten",
+      "backend": "Backend: {{name}}"
     },
     "chatPane": {
       "agent_list": "Agenten-Liste",
@@ -7456,6 +7457,11 @@
       "status_running": "arbeitet",
       "status_unread": "ungelesen",
       "tab_name_with_status": "{{name}} — {{status}}"
+    },
+    "backendDropdown": {
+      "backend_selector": "Backend-Auswahl",
+      "backend_list": "Backend-Liste",
+      "applies_to_this_chat_only": "Gilt nur für diesen Chat. Neue Chats starten auf dem Standard-Backend."
     }
   },
   "hooks": {
@@ -8992,7 +8998,17 @@
       "what_can_i_do_for_you": "Was kann ich für Sie tun?",
       "worktree_creation_returned_no_path": "Die Worktree-Erstellung hat keinen Pfad zurückgegeben",
       "loading_earlier_messages": "Frühere Nachrichten werden geladen…",
-      "send_failed_with_error": "Senden fehlgeschlagen: {{error}}"
+      "send_failed_with_error": "Senden fehlgeschlagen: {{error}}",
+      "stop_the_current_response_to_switch_backend": "Stoppe die aktuelle Antwort, um das Backend zu wechseln",
+      "wait_for_the_stop_to_finish_to_switch_backend": "Warte, bis der Stopp abgeschlossen ist, um das Backend zu wechseln",
+      "answer_the_pending_approval_to_switch_backend": "Beantworte die ausstehende Freigabe, um das Backend zu wechseln",
+      "wait_for_the_plan_to_finish_to_switch_backend": "Warte, bis der Plan abgeschlossen ist, um das Backend zu wechseln",
+      "wait_for_subagents_to_finish_to_switch_backend": "Warte, bis die Subagenten fertig sind, um das Backend zu wechseln",
+      "switch_this_chat_to_the_backend": "Diesen Chat auf das Backend {{backend}} umstellen?",
+      "switch_backend_replays_the_conversation": "Damit startet eine neue Sitzung auf {{backend}}. Die bisherige Unterhaltung wird darin erneut abgespielt.",
+      "switch_backend_replays_and_drops_the_model": "Damit startet eine neue Sitzung auf {{backend}}. Die bisherige Unterhaltung wird darin erneut abgespielt, und das Modell {{model}} ist dort nicht verfügbar.",
+      "switch_to_backend_action": "Zu {{backend}} wechseln",
+      "backend_switch_dropped_the_model_pin": "Das Modell {{model}} ist auf {{backend}} nicht verfügbar, daher wurde die Modellfestlegung dieses Chats entfernt."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 übersprungen — aktuell ausgewählt)",

@@ -17,6 +17,7 @@ import { agentSwitchFailureMessage } from '../utils/agentSwitchFeedback'
 import ModelDropdownList from './ModelDropdownList'
 import { SlotProvider } from '../providers/SlotContext'
 import { useProvider } from '../providers'
+import { resolveSlotBackend } from '../providers/acpBackends'
 import { useAgents } from '../hooks/useAgents'
 import { useFilteredDropdown } from '../hooks/useFilteredDropdown'
 import { useConnectionsUiEnabled } from '../hooks/useConnectionsUi'
@@ -212,7 +213,7 @@ export default function ChatPane({
   // The backend THIS pane's session is bound to. Split panes routinely show
   // sessions created under different defaults, so the configured value is a
   // fallback for a pane whose slot has not started — never an override.
-  const paneBackend = paneSlot?.acp_backend ?? acpBackend
+  const paneBackend = resolveSlotBackend(paneSlot?.acp_backend, acpBackend)
   // Capability, not identity: what this backend can do is answered by the
   // server, so a harness that supports a picker gets one without an edit here.
   const modelCaps = useModelCapabilities({ slot: slotKey, coldStartBackend: paneBackend })

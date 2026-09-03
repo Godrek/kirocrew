@@ -5545,7 +5545,8 @@
       "used": "Использовано",
       "voice_input": "Голосовой ввод",
       "finishing": "Завершение…",
-      "keep_holding_to_record": "Удерживайте, чтобы записать"
+      "keep_holding_to_record": "Удерживайте, чтобы записать",
+      "backend": "Бэкенд: {{name}}"
     },
     "chatPane": {
       "agent_list": "Список агентов",
@@ -7676,6 +7677,11 @@
       "status_running": "работает",
       "status_unread": "не прочитано",
       "tab_name_with_status": "{{name}} — {{status}}"
+    },
+    "backendDropdown": {
+      "backend_selector": "Выбор бэкенда",
+      "backend_list": "Список бэкендов",
+      "applies_to_this_chat_only": "Применяется только к этому чату. Новые чаты начинаются на бэкенде по умолчанию."
     }
   },
   "hooks": {
@@ -9266,7 +9272,17 @@
       "what_can_i_do_for_you": "Чем могу помочь?",
       "worktree_creation_returned_no_path": "Создание worktree не вернуло путь",
       "loading_earlier_messages": "Загрузка предыдущих сообщений…",
-      "send_failed_with_error": "Не удалось отправить: {{error}}"
+      "send_failed_with_error": "Не удалось отправить: {{error}}",
+      "stop_the_current_response_to_switch_backend": "Остановите текущий ответ, чтобы сменить бэкенд",
+      "wait_for_the_stop_to_finish_to_switch_backend": "Дождитесь завершения остановки, чтобы сменить бэкенд",
+      "answer_the_pending_approval_to_switch_backend": "Ответьте на ожидающее подтверждение, чтобы сменить бэкенд",
+      "wait_for_the_plan_to_finish_to_switch_backend": "Дождитесь завершения плана, чтобы сменить бэкенд",
+      "wait_for_subagents_to_finish_to_switch_backend": "Дождитесь завершения субагентов, чтобы сменить бэкенд",
+      "switch_this_chat_to_the_backend": "Переключить этот чат на бэкенд {{backend}}?",
+      "switch_backend_replays_the_conversation": "Это начнёт новую сессию на {{backend}}. Текущий разговор будет воспроизведён в ней заново.",
+      "switch_backend_replays_and_drops_the_model": "Это начнёт новую сессию на {{backend}}. Текущий разговор будет воспроизведён в ней заново, а модель {{model}} там недоступна.",
+      "switch_to_backend_action": "Переключить на {{backend}}",
+      "backend_switch_dropped_the_model_pin": "Модель {{model}} недоступна на {{backend}}, поэтому закреплённая модель этого чата была снята."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 пропущена — выбрана сейчас)",
