@@ -782,6 +782,7 @@ make this tool possible:
 <a href="https://github.com/giridhar-shyam" title="Giridhar Shyam"><img src="https://github.com/giridhar-shyam.png?size=64" width="64" height="64" alt="Giridhar Shyam" /></a>
 <a href="https://github.com/gmealy1" title="Gavin Mealy"><img src="https://github.com/gmealy1.png?size=64" width="64" height="64" alt="Gavin Mealy" /></a>
 <a href="https://github.com/Godivamasterpiece" title="Vivek Teja Sayyaparaju"><img src="https://github.com/Godivamasterpiece.png?size=64" width="64" height="64" alt="Vivek Teja Sayyaparaju" /></a> <!-- wokeignore:rule=master -->
+<a href="https://github.com/Godrek" title="Dante Knowles"><img src="https://github.com/Godrek.png?size=64" width="64" height="64" alt="Dante Knowles" /></a>
 <a href="https://github.com/GouthamHM" title="Goutham"><img src="https://github.com/GouthamHM.png?size=64" width="64" height="64" alt="Goutham" /></a>
 <a href="https://github.com/gragollier" title="Grant Gollier"><img src="https://github.com/gragollier.png?size=64" width="64" height="64" alt="Grant Gollier" /></a>
 <a href="https://github.com/greatfighter" title="Spencer"><img src="https://github.com/greatfighter.png?size=64" width="64" height="64" alt="Spencer" /></a>
