@@ -2656,6 +2656,7 @@ class _ChatSlot:
         "agent",
         "model",
         "acp_backend",
+        "_backend_explicit",
         "reasoning_effort",
         "mode",
         "workspace",
@@ -2817,6 +2818,14 @@ class _ChatSlot:
         # Once populated this follows the session, not the configurable default
         # used when future sessions are created.
         self.acp_backend: str | None = None
+        # Whether ``acp_backend`` is a pick somebody made (slot creation, fork,
+        # the per-slot switch) rather than the side effect of a speculative
+        # spawn. Only an EMPTY slot reads it: a slot holding a conversation
+        # keeps its binding regardless, but an empty slot's binding is
+        # otherwise presumed speculative and dropped with the unclaimed session
+        # (``_on_provider_unbound``), which would erase a pick made before the
+        # first turn. Not persisted: an empty slot never reaches history.
+        self._backend_explicit: bool = False
         # Reasoning effort: "" = provider default, else one of low/medium/high/max.
         # Currently consumed by an alternate ACP backend (--effort flag); ACP wired later.
         self.reasoning_effort: str = ""
@@ -5417,7 +5426,10 @@ class DashboardState:
             conversation to keep a harness for. Its binding came from a
             speculative spawn on the default of that moment, so once that
             unclaimed session is torn down the slot follows whatever default
-            the operator has chosen since, like any new conversation.
+            the operator has chosen since, like any new conversation — unless
+            the binding is an explicit pick (``_backend_explicit``: chosen at
+            creation, on fork, or through the per-slot switch), which nobody
+            has withdrawn and which the eager spawn must keep honouring.
 
             The pin re-check is for a slot that has no binding to answer for
             it: judged against the configured backend its next session would
@@ -5432,7 +5444,7 @@ class DashboardState:
             if slot is None:
                 return
             unbound = False
-            if not slot.messages and slot.acp_backend is not None:
+            if not slot.messages and slot.acp_backend is not None and not slot._backend_explicit:
                 slot.acp_backend = None
                 unbound = True
             # circular import: chat_handlers imports state at module scope.

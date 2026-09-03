@@ -14,6 +14,7 @@ import { shallowEqual } from 'react-redux'
 import { useAppDispatch, useAppSelector } from '../store'
 import { useConnected } from '../hooks/useConnected'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from '../components/ui/dropdown-menu'
+import { ACP_BACKEND_OPTIONS, acpBackendLabel } from '../providers/acpBackends'
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent } from '../components/ui/context-menu'
 import { offlineProps } from '../utils/offline'
 import { switchSlot, createSlot, deleteSlot, fetchHistory, resumeFromHistory, deleteHistorySession, clearSlotReveal, selectSidebarSubagentCounts, selectSidebarApprovalCounts } from '../store/chatSlice'
@@ -3292,6 +3293,19 @@ function ChatSidebar({
     onSuccess: focusComposer,
   })
 
+  // Create a chat ON a named harness. The entry names only the harness, so the
+  // mode follows the `defaultAutopilot` preference exactly as the main button
+  // does. The pick rides the create payload rather than following as a switch:
+  // with eager spawn on, a chat born on the default already has a session to
+  // tear down by the time a switch could be sent.
+  const createChatOnBackendMutation = useMutation({
+    mutationFn: (backend: string) => {
+      const effectiveMode = loadChatConfig().defaultAutopilot ? 'orchestrator' : (mode || '')
+      return dispatch(createSlot({ agent: defaultAgent || undefined, mode: effectiveMode, backend })).unwrap()
+    },
+    onSuccess: focusComposer,
+  })
+
   // Session colors
   const { paletteColors, boost, boostFor, colorMode } = useSessionPalette()
 
@@ -4655,6 +4669,24 @@ function ChatSidebar({
                     <span className="whitespace-normal text-[11px] leading-snug text-muted">{i18nT('pages.chatSidebar.crew_desc')}</span>
                   </span>
                 </DropdownMenuItem>
+                {/* The harness is chosen where the chat is made. Rows are the
+                 *  dashboard's own offered set, labelled by the resolver Settings ▸
+                 *  Chat and the composer chip use, so no surface names a harness
+                 *  differently. Kiro's id is the empty string, hence the prefixed
+                 *  key: a bare id would collide with "no key". */}
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50" disabled={creatingSlot}>
+                    <Cpu className="lucide-inline text-muted" /> {i18nT('pages.chatSidebar.new_chat_on_backend')}
+                    <ChevronRight className="lucide-inline ml-auto text-muted" />
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {ACP_BACKEND_OPTIONS.map(backend => (
+                      <DropdownMenuItem key={`backend:${backend}`} disabled={creatingSlot} onClick={() => { createChatOnBackendMutation.mutate(backend) }}>
+                        {acpBackendLabel(backend)}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => { setFolderModal({ mode: 'create', parentId: '' }) }}>
                   <FolderPlus size={14} className="text-muted" /> {i18nT('pages.chatSidebar.new_folder')}

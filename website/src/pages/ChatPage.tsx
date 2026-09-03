@@ -109,7 +109,7 @@ import {
 import ModelEffortDropdown from '../components/ModelEffortDropdown'
 import BackendDropdown from '../components/BackendDropdown'
 import { useConfirm } from '../components/ConfirmDialog'
-import { ACP_BACKEND_OPTIONS, acpBackendLabel, resolveSlotBackend } from '../providers/acpBackends'
+import { ACP_BACKEND_OPTIONS, acpBackendLabel, carriedSlotBackend, resolveSlotBackend } from '../providers/acpBackends'
 
 import ChatInput from '../components/ChatInput'
 import ErrorNotice from '../components/ErrorNotice'
@@ -1151,6 +1151,11 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     slots.find(s => s.key === activeSlot)?.acp_backend,
     acpBackend,
   )
+  // What a fork of the active slot is created on: the parent's OWN binding, so
+  // a conversation that was moved onto a harness continues there when copied
+  // (its pinned model exists there and nowhere else), and nothing when the
+  // parent is unbound — the server's default applies, as it does today.
+  const activeSlotOwnBackend = carriedSlotBackend(slots.find(s => s.key === activeSlot)?.acp_backend)
   // What this backend can do — asked of the server, never inferred from which
   // backend it is. `slot` lets the server answer from the LIVE session, which is
   // the only place a per-adapter capability (does this build expose the model
@@ -3025,7 +3030,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       // the query has errored or settled with no data, not just while loading.
       const resolvedCfg = forkCfg ?? await api.dashboardConfig()
       const direction = resolvedCfg?.tail_fork_enabled ? 'tail' : 'head'
-      const result = await dispatch(forkSlot({ slot: activeSlot, atIndex: visibleIndex, direction })).unwrap()
+      const result = await dispatch(forkSlot({ slot: activeSlot, atIndex: visibleIndex, direction, backend: activeSlotOwnBackend })).unwrap()
       if (result.ok) {
         await dispatch(switchSlot(result.key))
       } else {
@@ -3034,12 +3039,12 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     } catch (e) {
       alert(i18nT('pages.chatPage.fork_failed_error', { error: errMessage(e) || i18nT('pages.chatPage.unknown_error') }))
     }
-  }, [activeSlot, dispatch, forkCfg])
+  }, [activeSlot, activeSlotOwnBackend, dispatch, forkCfg])
 
   const handlePlanFromHere = useCallback(async (visibleIndex: number) => {
     if (!activeSlot) return
     try {
-      const result = await dispatch(forkSlot({ slot: activeSlot, atIndex: visibleIndex, mode: 'orchestrator' })).unwrap()
+      const result = await dispatch(forkSlot({ slot: activeSlot, atIndex: visibleIndex, mode: 'orchestrator', backend: activeSlotOwnBackend })).unwrap()
       if (result.ok) {
         await dispatch(switchSlot(result.key))
         // Unified view: the forked orchestrator slot lives in the same sidebar.
@@ -3050,7 +3055,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     } catch (e) {
       alert(i18nT('pages.chatPage.plan_from_here_failed_error', { error: errMessage(e) || i18nT('pages.chatPage.unknown_error') }))
     }
-  }, [activeSlot, dispatch, mode, navigate])
+  }, [activeSlot, activeSlotOwnBackend, dispatch, mode, navigate])
 
   const handleFileSave = useCallback(async (filePath: string, content: string) => {
     // Capture the slot BEFORE awaiting: if the user switches chats mid-save, the

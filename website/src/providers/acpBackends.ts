@@ -233,6 +233,19 @@ export function resolveSlotBackend(
   return slotBackend ?? configuredBackend ?? ACP_BACKEND_KIRO
 }
 
+/** The binding a NEW chat can be asked to carry from *slotBackend*, else undefined.
+ *
+ *  Only a slot's OWN binding is carried, and only one the dashboard offers. An
+ *  unbound slot has nothing to carry: the server's "absent" already means the
+ *  configured default, and naming that default explicitly would turn an
+ *  edition-only configured harness into a refused request. A binding outside
+ *  the offered set is one the create routes refuse, so it is not sent either.
+ *  `''` IS kiro, so the test is membership, never truthiness. */
+export function carriedSlotBackend(slotBackend: string | null | undefined): string | undefined {
+  if (slotBackend == null) return undefined
+  return ACP_BACKEND_OPTIONS.includes(slotBackend as AcpBackend) ? slotBackend : undefined
+}
+
 /** `POST /api/chat/slots/{slot}/backend` — the outcome of moving one slot.
  *
  *  `changed` is whether the harness the next session is created on moved;

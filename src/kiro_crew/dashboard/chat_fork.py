@@ -8,6 +8,7 @@ import logging
 from aiohttp import web
 
 from kiro_crew.config.loader import KiroCrewConfig
+from kiro_crew.dashboard.chat_handlers import parse_backend_choice, pin_slot_backend
 from kiro_crew.dashboard.chat_persistence import save_slot_off_loop
 from kiro_crew.dashboard.chat_utils import (
     _sync_dashboard_slots,
@@ -48,7 +49,9 @@ async def api_chat_slot_fork(request: web.Request) -> web.Response:
     An optional ``prompt`` is returned so the frontend can send it.
 
     Body: ``{ at_message_index?: number, prompt?: string, mode?: string,
-    direction?: "head"|"tail" }``
+    direction?: "head"|"tail", backend?: string }``. ``backend`` binds the fork
+    to a dashboard-selectable harness at birth (``""`` is kiro); absent leaves it
+    on the configured default.
     """
 
     state: DashboardState = request.app["state"]
@@ -116,6 +119,15 @@ async def api_chat_slot_fork(request: web.Request) -> web.Response:
     mode_override = body.get("mode")
     if mode_override is not None and mode_override not in ("", "orchestrator", "crew"):
         return web.json_response({"error": "mode must be '', 'orchestrator' or 'crew'"}, status=400)
+    # The harness the FORK is created on, read by presence (``""`` is kiro) and
+    # validated like slot creation. Absent keeps today's behaviour: the fork is
+    # unbound and its first session is created on the configured default.
+    backend_override: str | None = None
+    if "backend" in body:
+        parsed = parse_backend_choice(body["backend"], name)
+        if isinstance(parsed, web.Response):
+            return parsed
+        backend_override = parsed
     direction = body.get("direction", _FORK_DIRECTION_HEAD)
     if direction not in _FORK_DIRECTIONS:
         return web.json_response(
@@ -550,6 +562,11 @@ async def api_chat_slot_fork(request: web.Request) -> web.Response:
         count_user_session=True,
     )
     new_slot.forked_from = effective_session_key(slot)
+    if backend_override is not None:
+        # Before the transcript is copied and saved below, so the metadata line
+        # the save writes already names the harness and a restart rehydrates
+        # the fork onto it. The inherited model pin is judged against it.
+        pin_slot_backend(new_slot, backend_override)
     new_slot.reasoning_effort = slot.reasoning_effort
     # Inherit the active project directory so the fork keeps the parent's working
     # context (agent resolution, steering files, CWD) instead of falling back to

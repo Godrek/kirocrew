@@ -105,7 +105,7 @@ describe('handleFork direction wiring (zejiangg #5)', () => {
     await waitFor(() => expect(dashboardConfigMock).toHaveBeenCalled())
     await result.current('chat-1-100', 2)
 
-    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 2, undefined, undefined, 'tail')
+    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 2, undefined, undefined, 'tail', undefined)
   })
 
   it('dispatches forkSlot with direction "head" when dashboardConfig has tail_fork_enabled: false', async () => {
@@ -116,7 +116,7 @@ describe('handleFork direction wiring (zejiangg #5)', () => {
     await waitFor(() => expect(dashboardConfigMock).toHaveBeenCalled())
     await result.current('chat-1-100', 2)
 
-    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 2, undefined, undefined, 'head')
+    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 2, undefined, undefined, 'head', undefined)
   })
 
   it('dispatches forkSlot with direction "head" when tail_fork_enabled is absent from config', async () => {
@@ -127,7 +127,7 @@ describe('handleFork direction wiring (zejiangg #5)', () => {
     await waitFor(() => expect(dashboardConfigMock).toHaveBeenCalled())
     await result.current('chat-1-100', 0)
 
-    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 0, undefined, undefined, 'head')
+    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 0, undefined, undefined, 'head', undefined)
   })
 })
 
@@ -155,7 +155,7 @@ describe('handleFork B3 cold-cache fix (bug-fix regression test, required per ru
     resolveConfig({ tail_fork_enabled: true })
     await forkPromise
 
-    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 3, undefined, undefined, 'tail')
+    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 3, undefined, undefined, 'tail', undefined)
   })
 
   it('does NOT downgrade to head-fork when forkCfg is absent and the query has already settled (not loading) -- the exact case the original B3 fix missed', async () => {
@@ -187,7 +187,7 @@ describe('handleFork B3 cold-cache fix (bug-fix regression test, required per ru
     await result.current('chat-1-100', 3)
 
     expect(dashboardConfigMock).toHaveBeenCalledTimes(2)
-    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 3, undefined, undefined, 'tail')
+    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 3, undefined, undefined, 'tail', undefined)
   })
 
   it('downgrades to head-fork only when the resolved cold-cache config genuinely has tail_fork_enabled: false', async () => {
@@ -204,6 +204,6 @@ describe('handleFork B3 cold-cache fix (bug-fix regression test, required per ru
     resolveConfig({ tail_fork_enabled: false })
     await forkPromise
 
-    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 3, undefined, undefined, 'head')
+    expect(forkChatSlotMock).toHaveBeenCalledWith('chat-1-100', 3, undefined, undefined, 'head', undefined)
   })
 })

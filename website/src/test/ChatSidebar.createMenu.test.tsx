@@ -176,6 +176,39 @@ describe('create-button caret menu', () => {
     expect(mocks.createChatSlot.mock.calls.some(c => c.includes('orchestrator'))).toBe(true)
   })
 
+  it('offers the dashboard-selectable harnesses and creates the chat on the picked one', async () => {
+    // The pick rides the CREATE payload: with eager spawn on, a chat born on
+    // the default and switched afterwards already has a session to tear down.
+    renderSidebar()
+    openCreateMenu()
+    const trigger = (await screen.findByText('New chat on…')).closest('[role="menuitem"]') as HTMLElement
+    // Radix opens a sub-menu from its trigger on ArrowRight (the jsdom-safe path).
+    fireEvent.keyDown(trigger, { key: 'ArrowRight' })
+    const options = await waitFor(() => {
+      const items = ['Kiro CLI', 'Claude Code', 'Codex'].map(label => screen.getByText(label))
+      return items
+    })
+    expect(options).toHaveLength(3)
+    fireEvent.click(screen.getByText('Codex'))
+    await waitFor(() => expect(mocks.createChatSlot).toHaveBeenCalled())
+    // The harness is the last positional argument of createChatSlot.
+    const call = mocks.createChatSlot.mock.calls.at(-1) as unknown[]
+    expect(call[9]).toBe('codex')
+  })
+
+  it('sends "" for kiro rather than omitting the harness', async () => {
+    // `''` IS the kiro harness. The server reads the body by presence, so a
+    // truthiness-driven caller would create the chat on whatever the default is.
+    renderSidebar()
+    openCreateMenu()
+    const trigger = (await screen.findByText('New chat on…')).closest('[role="menuitem"]') as HTMLElement
+    fireEvent.keyDown(trigger, { key: 'ArrowRight' })
+    fireEvent.click(await screen.findByText('Kiro CLI'))
+    await waitFor(() => expect(mocks.createChatSlot).toHaveBeenCalled())
+    const call = mocks.createChatSlot.mock.calls.at(-1) as unknown[]
+    expect(call[9]).toBe('')
+  })
+
   it('tags Crew Mode experimental where the mode is chosen, and only there', async () => {
     // Crew Mode dispatches every message to a sub-session and relays a summary
     // rather than the reply, so it does not yet read like a conversation. Until

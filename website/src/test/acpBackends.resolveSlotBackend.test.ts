@@ -16,6 +16,7 @@ import {
   ACP_BACKEND_KIRO,
   ACP_BACKEND_OPTIONS,
   acpBackendLabel,
+  carriedSlotBackend,
   resolveSlotBackend,
 } from '../providers/acpBackends'
 
@@ -50,5 +51,26 @@ describe('acpBackendLabel', () => {
     // A config written by hand can persist one. The control still has to say
     // where the slot is before it can offer to move it off.
     expect(acpBackendLabel('kas')).toBe('External backend (kas)')
+  })
+})
+
+describe('carriedSlotBackend', () => {
+  it('carries a slot\'s own binding onto the chat created from it', () => {
+    expect(carriedSlotBackend(ACP_BACKEND_CODEX)).toBe(ACP_BACKEND_CODEX)
+  })
+
+  it('carries an explicit kiro binding rather than reading it as unbound', () => {
+    expect(carriedSlotBackend(ACP_BACKEND_KIRO)).toBe(ACP_BACKEND_KIRO)
+  })
+
+  it('carries nothing from an unbound slot, so the server default applies', () => {
+    expect(carriedSlotBackend(undefined)).toBeUndefined()
+    expect(carriedSlotBackend(null)).toBeUndefined()
+  })
+
+  it('does not send a binding the create routes would refuse', () => {
+    // An edition-only harness can be persisted on a slot; the dashboard's
+    // create routes accept only the offered set, so it is left to the default.
+    expect(carriedSlotBackend('kas')).toBeUndefined()
   })
 })

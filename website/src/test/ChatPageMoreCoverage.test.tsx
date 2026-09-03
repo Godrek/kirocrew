@@ -320,7 +320,7 @@ describe('ChatPage row callbacks — fork', () => {
     await renderTurn()
     await act(async () => { await assistantProps!.onFork!(1) })
     await waitFor(() => expect(apiMocks.forkChatSlot).toHaveBeenCalled())
-    expect(apiMocks.forkChatSlot).toHaveBeenCalledWith('chat-1', 1, undefined, undefined, 'head')
+    expect(apiMocks.forkChatSlot).toHaveBeenCalledWith('chat-1', 1, undefined, undefined, 'head', undefined)
     expect(alertSpy).not.toHaveBeenCalled()
   })
 
@@ -334,7 +334,7 @@ describe('ChatPage row callbacks — fork', () => {
     await renderTurn()
     await act(async () => { await assistantProps!.onFork!(3) })
     await waitFor(() => expect(apiMocks.forkChatSlot).toHaveBeenCalled())
-    expect(apiMocks.forkChatSlot).toHaveBeenCalledWith('chat-1', 3, undefined, undefined, 'tail')
+    expect(apiMocks.forkChatSlot).toHaveBeenCalledWith('chat-1', 3, undefined, undefined, 'tail', undefined)
   })
 
   it('reports a refused fork through an alert instead of switching sessions', async () => {
@@ -369,7 +369,7 @@ describe('ChatPage row callbacks — plan from here', () => {
     await renderTurn()
     await act(async () => { await assistantProps!.onPlanFromHere!(2) })
     await waitFor(() => expect(apiMocks.forkChatSlot).toHaveBeenCalled())
-    expect(apiMocks.forkChatSlot).toHaveBeenCalledWith('chat-1', 2, undefined, 'orchestrator', undefined)
+    expect(apiMocks.forkChatSlot).toHaveBeenCalledWith('chat-1', 2, undefined, 'orchestrator', undefined, undefined)
     expect(alertSpy).not.toHaveBeenCalled()
   })
 

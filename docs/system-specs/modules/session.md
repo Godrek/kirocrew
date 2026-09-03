@@ -249,8 +249,10 @@ send time.
   those is user intent to change it. A slot nobody has spoken to is unbound
   instead: its binding came from a speculative spawn on the default of that
   moment, and once that unclaimed session is torn down the empty slot follows
-  the current default like any new conversation, and since a slot with no
-  messages is never written to history (the save returns on an empty
+  the current default like any new conversation — unless the binding is an
+  explicit pick (`_ChatSlot._backend_explicit`, set by slot creation, fork
+  and the per-slot switch), which the unbind leaves alone — and since a slot
+  with no messages is never written to history (the save returns on an empty
   window), no speculative binding reaches disk to be restored either.
   The deliberate harness changes are the two routes below, which share
   `chat_handlers._restart_slot_conversation`: reset-conversation clears the
@@ -545,6 +547,28 @@ differently) and the dropdown offers exactly
 disabled state with the reason on the chip, and it asks BEFORE switching a slot
 that holds turns — the conversation is discarded and replayed, which is not
 something to report afterwards. A slot with no turns switches with no dialog.
+
+The harness can also be chosen at birth. `POST /api/chat/slots` and
+`POST /api/chat/slots/{slot}/fork` accept `backend`, read by presence and
+validated by the same `parse_backend_choice` the switch route uses (a 400 with
+`backend_invalid` or `backend_not_selectable`; an explicit pick is never
+substituted, and a refused one mints nothing). Creation records it through
+`pin_slot_backend` BEFORE `schedule_eager_spawn`, so the speculative session is
+created on the requested harness instead of on the default and then torn down by
+a later switch — the model passed alongside is judged against that harness
+(`drop_unrunnable_slot_model`), not the configured one, so a valid pairing
+survives the way in and an invalid one drops to "inherit". A fork records it
+before its transcript is copied and saved, so the metadata line already names
+it. Absent means the configured default: apps, MCP, the CLI and sub-agents keep
+creating unbound slots. A `name` that addresses an existing slot cannot re-bind
+it — a differing pick is a 409 `slot_backend_bound` pointing at the switch
+route, which is the one with the teardown and busy guards. Every deliberate pick
+sets `_ChatSlot._backend_explicit`, which is what keeps `_on_provider_unbound`
+from unbinding an empty slot whose speculative session was torn down unclaimed:
+the one case where "an empty slot's binding came from the default of that
+moment" is false. The dashboard sends it from the sidebar's create menu (a
+"New chat on…" submenu listing the dashboard-selectable harnesses, labelled by
+`acpBackendLabel`) and carries a parent's own binding onto a fork.
 
 The response is `{"ok", "slot", "backend", "changed", "reset", "model_cleared",
 "model"}`. `changed` is whether the harness the next session is created on moved;

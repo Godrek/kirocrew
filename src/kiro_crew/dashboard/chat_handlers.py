@@ -1782,7 +1782,13 @@ _CREATABLE_MODES = ("", "orchestrator", "crew", "design-critique")
 
 
 async def api_chat_slot_create(request: web.Request) -> web.Response:
-    """POST /api/chat/slots — create a new chat slot."""
+    """POST /api/chat/slots — create a new chat slot.
+
+    ``backend``, when PRESENT, is the harness the slot is created on (``""`` is
+    kiro): one of ``ACP_BACKENDS_DASHBOARD_SELECTABLE``, refused with a 400
+    otherwise, and recorded on the slot before the eager spawn so the
+    speculative session is born on it. Absent means the configured default.
+    """
     state: DashboardState = request.app["state"]
     try:
         body = await request.json()
@@ -1801,6 +1807,16 @@ async def api_chat_slot_create(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "folder not found", "code": "folder_not_found"}, status=400
         )
+    # The harness the slot is CREATED on, read by PRESENCE: ``""`` IS kiro.
+    # Validated before anything is minted, so a refused pick creates nothing.
+    # Absent means the configured default — what every caller that does not
+    # know about harnesses (apps, MCP, the CLI, sub-agents) gets today.
+    backend: str | None = None
+    if isinstance(body, dict) and "backend" in body:
+        parsed = parse_backend_choice(body["backend"], str(name or ""))
+        if isinstance(parsed, web.Response):
+            return parsed
+        backend = parsed
 
     # Resolve workspace from agent bindings
     workspace = "default"
@@ -1877,6 +1893,10 @@ async def api_chat_slot_create(request: web.Request) -> web.Response:
                     },
                     status=400,
                 )
+            # Whether ``name`` addresses a slot that already exists, decided
+            # on the normalized key — the one the store is keyed by — before
+            # the lookup-or-mint below erases the distinction.
+            existed = bool(name) and _normalize_slot_key(str(name)) in state._slots
             slot = state.get_or_create_slot(
                 name,
                 agent=agent,
@@ -1921,6 +1941,32 @@ async def api_chat_slot_create(request: web.Request) -> web.Response:
             # would turn this 404 into an existence oracle for slots the caller
             # may not know about. The prose stays in `error` for logs.
             return web.json_response({"error": "not found", "code": "slot_not_found"}, status=404)
+        if backend is not None:
+            if existed:
+                # An existing slot's harness is its own. Re-binding it here
+                # would be the switch route without that route's teardown and
+                # busy guards, so a differing pick is refused and the caller is
+                # pointed at the route that can move a conversation. The same
+                # harness is a no-op: nothing was asked that is not already so.
+                if backend != _slot_backend(slot):
+                    return web.json_response(
+                        {
+                            "error": (
+                                "slot already runs on another backend; "
+                                "POST /api/chat/slots/{slot}/backend moves it"
+                            ),
+                            "code": "slot_backend_bound",
+                            "slot": slot.key,
+                        },
+                        status=409,
+                    )
+            else:
+                # Recorded BEFORE schedule_eager_spawn below, so the speculative
+                # session is created on the harness the caller asked for instead
+                # of on the default and then torn down by a later switch. The
+                # model passed alongside is judged against THIS harness: a valid
+                # pairing survives, an invalid one drops to "inherit".
+                pin_slot_backend(slot, backend)
         # Pin title if explicitly provided (prevents auto-title from overwriting)
         title = (body.get("title") or "").strip()[:200] if isinstance(body, dict) else ""
         if title:
@@ -2184,6 +2230,9 @@ async def _restart_slot_conversation(
     this call just left.
     """
     slot.acp_backend = backend
+    # A reset hands the slot back to the default (no pick to keep); a named
+    # harness is a pick, kept through an unclaimed teardown like any other.
+    slot._backend_explicit = backend is not None
     await state.sessions.discard_conversation(session_key, replay=replay)
     dropped = drop_unrunnable_slot_model(slot, _slot_backend(slot))
     slot._dirty = True
@@ -4036,6 +4085,62 @@ def _slot_backend(slot: "_ChatSlot") -> str:
     return _configured_backend()
 
 
+def parse_backend_choice(value: object, slot_name: str) -> str | web.Response:
+    """Validate a caller's explicit harness pick: the id, or the 400 to return.
+
+    One validator for every route that lets a caller name a harness — the
+    per-slot switch, slot creation and fork — so they cannot drift in what they
+    accept. The set is ``ACP_BACKENDS_DASHBOARD_SELECTABLE``, the dashboard's
+    own public choices, and deliberately NOT ``ACP_BACKENDS_SELECTABLE``: none
+    of these routes may be a wider door onto an edition-only harness than the
+    settings page is.
+
+    An explicit pick is refused, never quietly resolved onto something else:
+    the caller asked for a specific harness and would otherwise be told a
+    request succeeded that landed somewhere else. Presence is the caller's to
+    decide — ``""`` IS the kiro harness, so this never reads truthiness.
+    """
+    if not isinstance(value, str):
+        return web.json_response(
+            {"error": "backend must be a string", "code": "backend_invalid", "slot": slot_name},
+            status=400,
+        )
+    if value not in ACP_BACKENDS_DASHBOARD_SELECTABLE:
+        offered = ", ".join(b or ACP_BACKEND_KIRO_LABEL for b in ACP_BACKENDS_DASHBOARD_SELECTABLE)
+        return web.json_response(
+            {
+                "error": f"unknown backend; choose one of: {offered}",
+                "code": "backend_not_selectable",
+                "slot": slot_name,
+            },
+            status=400,
+        )
+    return value
+
+
+def pin_slot_backend(slot: _ChatSlot, backend: str) -> bool:
+    """Record *backend* as *slot*'s deliberate binding; True if the model pin went.
+
+    The cheap harness change: nothing exists on another harness, so nothing is
+    torn down and the binding is simply written ahead of whatever spawn comes
+    next — the eager spawn reads it, which is why slot creation calls this
+    BEFORE scheduling one. Marked explicit so a speculative session torn down
+    unclaimed does not unbind it: ``_on_provider_unbound`` unbinds an EMPTY slot
+    on the presumption that its binding came from a spawn on the default of
+    that moment, and a pick the caller made is exactly the case where that
+    presumption is wrong. A pin the harness cannot run is dropped rather than
+    handed over as an override that dies on the first prompt; clearing means
+    "inherit what the harness serves", never a substituted id. Dirty because
+    the metadata line carries the binding and the periodic save skips a clean
+    slot.
+    """
+    slot.acp_backend = backend
+    slot._backend_explicit = True
+    cleared = drop_unrunnable_slot_model(slot, backend)
+    slot._dirty = True
+    return cleared
+
+
 def clear_unrunnable_slot_models(state: "DashboardState", backend: str) -> list[str]:
     """Drop model pins that *backend* cannot run, on slots it will govern.
 
@@ -4549,24 +4654,9 @@ async def api_chat_slot_backend(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "backend is required", "code": "backend_missing"}, status=400
         )
-    requested = body["backend"]
-    if not isinstance(requested, str):
-        return web.json_response(
-            {"error": "backend must be a string", "code": "backend_invalid"}, status=400
-        )
-    if requested not in ACP_BACKENDS_DASHBOARD_SELECTABLE:
-        offered = ", ".join(b or ACP_BACKEND_KIRO_LABEL for b in ACP_BACKENDS_DASHBOARD_SELECTABLE)
-        # An explicit pick is refused, never quietly resolved onto something
-        # else: the caller asked for a specific harness and would otherwise be
-        # told a switch succeeded that did not happen.
-        return web.json_response(
-            {
-                "error": f"unknown backend; choose one of: {offered}",
-                "code": "backend_not_selectable",
-                "slot": name,
-            },
-            status=400,
-        )
+    requested = parse_backend_choice(body["backend"], name)
+    if isinstance(requested, web.Response):
+        return requested
 
     # The harness this slot's next session would be created on today. A recorded
     # binding that is no longer selectable degrades to the configured default
@@ -4596,12 +4686,8 @@ async def api_chat_slot_backend(request: web.Request) -> web.Response:
         _post_backend_switch_notice(slot, requested, prior_model if model_cleared else "")
     else:
         # The cheap case: nothing exists on the old harness, so the binding is
-        # simply recorded. Dirty because the metadata line carries the binding
-        # and the periodic save skips a clean slot — without it a restart before
-        # the first turn would rehydrate the harness this call just left.
-        slot.acp_backend = requested
-        model_cleared = drop_unrunnable_slot_model(slot, requested)
-        slot._dirty = True
+        # simply recorded.
+        model_cleared = pin_slot_backend(slot, requested)
         state.push_slots_update()
         reset = False
 

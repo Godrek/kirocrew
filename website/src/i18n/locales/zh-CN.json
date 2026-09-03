@@ -8988,6 +8988,7 @@
       "new_autopilot_chat": "新建自动驾驶聊天",
       "new_chat": "新建对话",
       "new_chat_in_folder": "在文件夹中新建聊天",
+      "new_chat_on_backend": "在指定后端新建对话…",
       "new_chat_in_name": "在 {{name}} 中新建聊天",
       "new_chat_session": "新建聊天会话",
       "new_folder": "新建文件夹",

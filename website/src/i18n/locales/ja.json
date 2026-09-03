@@ -8988,6 +8988,7 @@
       "new_autopilot_chat": "新しいオートパイロットチャット",
       "new_chat": "新しいチャット",
       "new_chat_in_folder": "フォルダー内に新しいチャット",
+      "new_chat_on_backend": "バックエンドを選んで新規チャット…",
       "new_chat_in_name": "「{{name}}」で新しいチャットを開始",
       "new_chat_session": "新しいチャットセッション",
       "new_folder": "新しいフォルダー",
