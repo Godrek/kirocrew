@@ -79,6 +79,11 @@ def register(app: web.Application) -> None:
     # Optimizer
     app.router.add_post("/api/optimizer/optimize", handlers.handle_optimize)
     app.router.add_post("/api/chat/slots/{slot}/model", chat.api_chat_slot_model)
+    # Sets the slot's OWN durable harness binding — the next session for this
+    # slot is created on it. No live_session scope: a running ACP conversation
+    # cannot be moved between harnesses, so a switch on an open conversation
+    # discards the native session and continues by replay.
+    app.router.add_post("/api/chat/slots/{slot}/backend", chat.api_chat_slot_backend)
     app.router.add_post(
         "/api/chat/slots/{slot}/reasoning-effort", chat.api_chat_slot_reasoning_effort
     )

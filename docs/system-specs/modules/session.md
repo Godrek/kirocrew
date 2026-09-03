@@ -252,12 +252,13 @@ send time.
   the current default like any new conversation, and since a slot with no
   messages is never written to history (the save returns on an empty
   window), no speculative binding reaches disk to be restored either.
-  The one deliberate harness change is reset-conversation
-  (`api_chat_slot_reset_conversation`), which clears the binding before the
-  discard's await — a turn admitted during that suspension must not respawn on
-  the old harness and re-bind it — so the fresh conversation starts on the
-  configured default, drops a pin that default cannot run, and dirties the
-  slot so the next save drops the discarded binding from the metadata line. The binding is written by
+  The deliberate harness changes are the two routes below, which share
+  `chat_handlers._restart_slot_conversation`: reset-conversation clears the
+  binding, and `POST /api/chat/slots/{slot}/backend` sets it. Both write the
+  binding before the discard's await — a turn admitted during that suspension
+  must not respawn on the old harness and re-bind it — drop a pin the resulting
+  harness cannot run, and dirty the slot so the next save rewrites the metadata
+  line. The binding is written by
   `chat_runner.bind_slot_to_session`, the one helper every path that creates a
   slot's session runs through — the real turn and the speculative eager spawn
   alike — which reads `conversation_backend(key)` onto the slot and pushes the
@@ -456,9 +457,11 @@ Three properties the route holds, each of which fails silently if broken:
 - It is nonetheless a FULL teardown (provider shutdown plus
   `release_subagent_runtime`), so it takes the same guards the sibling `reload`
   route does, through the same shared helpers rather than a third policy:
-  `_app_cancel_denied` on the resolved SESSION key, `provider.has_active_turn()`,
+  `_app_cancel_denied` on the resolved SESSION key, then
+  `chat_handlers._slot_teardown_denied` — `provider.has_active_turn()`,
   `slot.running` widened with `slot._in_stage_execution`, and
-  `_subagents_attached_response`. Each protects work invisible from outside — a
+  `_subagents_attached_response` — which the per-slot backend route runs too, so
+  one teardown has one policy. Each protects work invisible from outside — a
   turn on the session with no dashboard task behind it (an inbound channel
   message, which `slot.running` cannot see), a turn mid-write, a plan between
   stages, and children still running after their parent's turn ended.
@@ -480,6 +483,69 @@ The transcript is deliberately left in place, so the tab still shows earlier
 messages the model no longer remembers. That is the honest rendering — the record
 is the user's, the context was the conversation's — and it is why this is an
 explicit request rather than something the gateway does on its own.
+
+### Choosing the harness a slot runs on
+
+`POST /api/chat/slots/{slot}/backend` (`api_chat_slot_backend`), body
+`{"backend": "<id>"}`, writes the slot's OWN durable binding, so the next session
+for that slot is CREATED on that harness and stays there across recycles and
+restarts. The configured `agent.acp_backend` goes back to meaning what it says —
+the default for a slot that has never been bound — instead of being flipped
+between spawns to get two concurrent sessions onto two harnesses.
+
+`""` IS the kiro harness, so the body's `backend` key is required by PRESENCE,
+never by truthiness. Validation is against `ACP_BACKENDS_DASHBOARD_SELECTABLE`
+(`acp/types.py`) — the same tuple `_EDITABLE_CONFIG["agent.acp_backend"]` renders,
+so the two surfaces cannot name different harnesses — and deliberately NOT
+`ACP_BACKENDS_SELECTABLE`, which also carries edition-only harnesses an operator
+may persist by hand: this route must not be a wider door than the settings page.
+An unlisted value is refused rather than resolved onto something else, because an
+explicit pick is never substituted.
+
+**There is no `live_session` scope and there must not be one.** A running ACP
+conversation cannot be moved between harnesses: the native session id belongs to
+the process that issued it and the two model vocabularies are disjoint. So there
+are two cases, and which one applies is decided by `_slot_holds_conversation` —
+a live provider (the eager spawn creates one before any message), a resume
+pointer (`resumable_hint`, the in-memory probe, because `resumable_sid` prunes
+and can rewrite the map file on the event loop), or real turns in the transcript.
+It fails toward "there is one": reporting a conversation that is not there costs
+a no-op discard, missing one that is there is the silent harness migration the
+binding exists to prevent.
+
+- **Nothing to end** (no session, no pointer, no turns — or the harness is not
+  actually changing): the binding is recorded, a pin the target cannot run is
+  dropped, the slot is marked dirty and the update pushed. Nothing is torn down.
+- **A live or resumable conversation**: the switch necessarily discards the
+  native session and continues by replay, which is what `detect_provider_switch`
+  would do anyway. It runs through `_restart_slot_conversation`, the same helper
+  reset-conversation uses, and posts a notice into the transcript saying the
+  conversation moved harness and will be replayed — the harness never changes
+  silently under an open conversation.
+
+The current harness is read through `resolve_session_backend(slot.acp_backend,
+_configured_backend())`, so a binding that is no longer selectable degrades to
+the configured default with the reason logged instead of raising: a slot bound to
+an uninstalled harness can still be moved somewhere else rather than stranded.
+
+Guards are `_app_cancel_denied` on the resolved SESSION key (a slot's owner is
+not necessarily the linked session's), then `_slot_teardown_denied`, then two of
+this route's own: `slot_stopping` and `slot_approval_pending` — a stop already
+under way is a competing teardown, and an approval card belongs to the session
+this may discard. They run unconditionally, not only on the teardown path:
+whether the slot holds a conversation is not the caller's to know, so the answer
+must not depend on it.
+
+The response is `{"ok", "slot", "backend", "changed", "reset", "model_cleared",
+"model"}`. `changed` is whether the harness the next session is created on moved;
+`reset` is whether a conversation was discarded (and therefore replayed).
+`model_cleared` reports a dropped pin: dropping it is correct — the vocabularies
+are disjoint and a pin is never translated — but a model the user chose is never
+taken away silently, so the caller is told and can say so. Errors carry a
+machine-readable `code`: `slot_not_found` (404, also the app-isolation answer),
+`invalid_json` / `backend_missing` / `backend_invalid` / `backend_not_selectable`
+(400), and `turn_in_flight` / `slot_orchestrating` / `slot_subagents_running` /
+`slot_stopping` / `slot_approval_pending` (409).
 
 ### Load Recovery (stale native session lock — F2)
 

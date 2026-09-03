@@ -136,6 +136,19 @@ ACP_BACKENDS_SELECTABLE = frozenset(
     {ACP_BACKEND_KIRO, ACP_BACKEND_KAS, ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX}
 )
 
+# What the DASHBOARD offers a person: the three publicly supported harnesses.
+# Deliberately narrower than ACP_BACKENDS_SELECTABLE, which is what an operator
+# may persist by hand — an edition-only harness stays reachable through the
+# config file without every dashboard surface becoming a door onto it. Ordered,
+# because it is rendered as a picker and as the "must be one of" text of a
+# refusal, and one source so the settings enum and the per-slot endpoint cannot
+# offer different harnesses.
+ACP_BACKENDS_DASHBOARD_SELECTABLE: tuple[str, ...] = (
+    ACP_BACKEND_KIRO,
+    ACP_BACKEND_CLAUDE,
+    ACP_BACKEND_CODEX,
+)
+
 # ── Capability membership (harness-parity H6, H7) ──
 # Every capability a backend may claim is an OPT-IN set here, never a negation at
 # the call site. ``not is_claude_backend`` reads correctly with two backends and

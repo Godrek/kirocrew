@@ -31,6 +31,7 @@ from kiro_crew.acp.types import (
     ACP_BACKEND_KAS,
     ACP_BACKEND_KIRO,
     ACP_BACKENDS_ACP_RUNTIME,
+    ACP_BACKENDS_DASHBOARD_SELECTABLE,
     ACP_BACKENDS_INTERNAL_SANDBOX,
     ACP_BACKENDS_KNOWN,
     ACP_BACKENDS_SELECTABLE,
@@ -81,6 +82,19 @@ def test_kiro_is_always_selectable() -> None:
     an operator can persist a configuration in which no harness is selectable.
     """
     assert ACP_BACKEND_KIRO in ACP_BACKENDS_SELECTABLE
+
+
+def test_kiro_is_always_offered_by_the_dashboard() -> None:
+    """H1: the floor holds on the surface a person actually picks from.
+
+    ``ACP_BACKENDS_DASHBOARD_SELECTABLE`` is what the settings enum and the
+    per-slot backend route offer. It is deliberately NARROWER than
+    ``ACP_BACKENDS_SELECTABLE`` — an edition-only harness stays reachable by hand
+    without every dashboard surface becoming a door onto it — and narrowing is
+    exactly how the default could stop being offerable.
+    """
+    assert ACP_BACKEND_KIRO in ACP_BACKENDS_DASHBOARD_SELECTABLE
+    assert set(ACP_BACKENDS_DASHBOARD_SELECTABLE) <= ACP_BACKENDS_SELECTABLE
 
 
 def test_provider_enum_is_acp_only() -> None:
@@ -228,6 +242,7 @@ def test_capability_sets_are_subsets_of_known_backends() -> None:
     """
     for name, members in (
         ("ACP_BACKENDS_SELECTABLE", ACP_BACKENDS_SELECTABLE),
+        ("ACP_BACKENDS_DASHBOARD_SELECTABLE", frozenset(ACP_BACKENDS_DASHBOARD_SELECTABLE)),
         ("ACP_BACKENDS_SESSION_SHARING", ACP_BACKENDS_SESSION_SHARING),
         ("ACP_BACKENDS_STEER", ACP_BACKENDS_STEER),
         ("ACP_BACKENDS_INTERNAL_SANDBOX", ACP_BACKENDS_INTERNAL_SANDBOX),

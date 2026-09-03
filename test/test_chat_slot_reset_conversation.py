@@ -161,8 +161,11 @@ class TestTheReplayParameter:
 
         src = inspect.getsource(chat_handlers.api_chat_slot_reset_conversation)
         body_read = src.index("await request.json()")
-        first_guard = src.index("state.sessions.get_provider(key)")
-        discard = src.index("discard_conversation(key, replay=")
+        # The guards and the teardown are shared with the per-slot backend route
+        # (one policy for one teardown), so the order this pins is the order of
+        # the two calls.
+        first_guard = src.index("_slot_teardown_denied(")
+        discard = src.index("_restart_slot_conversation(")
 
         assert body_read < first_guard, (
             "the body is parsed after the first busy guard, so a slow body widens "

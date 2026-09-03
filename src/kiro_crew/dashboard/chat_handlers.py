@@ -30,7 +30,11 @@ from kiro_crew.acp.model_catalog import (
     backend_model_capabilities,
     model_allowed,
 )
-from kiro_crew.acp.types import ACP_BACKEND_KIRO, ACP_BACKEND_KIRO_LABEL
+from kiro_crew.acp.types import (
+    ACP_BACKEND_KIRO,
+    ACP_BACKEND_KIRO_LABEL,
+    ACP_BACKENDS_DASHBOARD_SELECTABLE,
+)
 from kiro_crew.agent_discovery import cached_project_agent_names, warm_project_agent_names
 from kiro_crew.config.loader import (
     KiroCrewConfig,
@@ -38,6 +42,7 @@ from kiro_crew.config.loader import (
     config_dir,
     default_project_dir,
     resolve_agent_bindings,
+    resolve_session_backend,
 )
 from kiro_crew.dashboard.channel_slots import channel_slot_name, note_slot_closed
 from kiro_crew.dashboard.chat_auto_tag import maybe_auto_tag
@@ -2099,6 +2104,93 @@ def _subagents_attached_response(
     return None
 
 
+def _slot_teardown_denied(
+    state: DashboardState, slot: _ChatSlot, name: str, session_key: str, operation: str
+) -> web.Response | None:
+    """409 while a full session teardown would destroy work in flight, else None.
+
+    One policy for every route that discards a slot's native conversation —
+    resetting it, and changing the harness it runs on, which cannot be done to a
+    live ACP session and so has to end it. Each probe protects work the caller
+    cannot see from outside, and none of them subsumes another:
+
+    * ``has_active_turn`` on the SESSION, which ``slot.running`` cannot see: an
+      inbound channel message runs a turn on the linked session with no
+      dashboard task behind it, and the teardown would take its output with it.
+      It inherits the reload route's edge — a turn holding the per-session
+      semaphore with no prompt in flight yet is not seen — and matching that
+      sibling is deliberate, because a second, subtly different notion of "busy"
+      for one teardown is how the two drift apart.
+    * ``slot.running`` for this slot's own task.
+    * ``_in_stage_execution``: an autopilot plan reads ``running`` False BETWEEN
+      stages while it is still mid-plan, so ``running`` alone would discard the
+      conversation the plan is writing into and cold-start its next stage.
+    * Attached sub-agents: the teardown releases the shared runtime the parent's
+      children run on, and ``running`` is False while they keep going because
+      the parent turn ends first.
+
+    Callers with additional reasons of their own add them AROUND this, not
+    inside it: what belongs here is the set that protects the teardown itself.
+    """
+    provider = state.sessions.get_provider(session_key)
+    if provider is not None and provider.has_active_turn():
+        return web.json_response(
+            {"error": "a turn is in flight", "code": "turn_in_flight", "slot": name},
+            status=409,
+        )
+    if slot.running:
+        return web.json_response(
+            {
+                "error": "a turn is running on this slot",
+                "code": "turn_in_flight",
+                "slot": name,
+            },
+            status=409,
+        )
+    if slot._in_stage_execution:
+        return web.json_response(
+            {"error": "slot is orchestrating", "code": "slot_orchestrating", "slot": name},
+            status=409,
+        )
+    return _subagents_attached_response(state, slot, session_key, operation)
+
+
+async def _restart_slot_conversation(
+    state: DashboardState,
+    slot: _ChatSlot,
+    session_key: str,
+    backend: str | None,
+    *,
+    replay: bool,
+) -> bool:
+    """Discard *slot*'s native conversation and bind it to *backend*; True if the pin went.
+
+    The two deliberate harness changes share this: a reset ends the conversation
+    and hands the slot back to the configured default (``backend`` None), and a
+    per-slot backend pick moves it onto the harness the caller named. Every
+    teardown that is NOT one of those keeps the binding, because a recycle is
+    not intent to change harness.
+
+    The binding is written BEFORE the discard's await. A turn admitted during
+    that suspension would otherwise spawn on the old binding and re-bind it,
+    undoing the change the caller just asked for.
+
+    A model pin the resulting harness cannot run is dropped — vocabularies are
+    disjoint, so it would reach the next session as an override it rejects on
+    the first prompt — and clearing means "inherit what that harness serves",
+    never a substituted id. The slot is marked dirty because the metadata line
+    still names the old binding until a save rewrites it, and the save skips a
+    clean slot, so a restart before the next turn would rehydrate the harness
+    this call just left.
+    """
+    slot.acp_backend = backend
+    await state.sessions.discard_conversation(session_key, replay=replay)
+    dropped = drop_unrunnable_slot_model(slot, _slot_backend(slot))
+    slot._dirty = True
+    state.push_slots_update()
+    return dropped
+
+
 async def _reset_slot_session(
     state: DashboardState,
     slot: _ChatSlot,
@@ -3306,59 +3398,17 @@ async def api_chat_slot_reset_conversation(request: web.Request) -> web.Response
     if isinstance(body, dict) and "replay" in body:
         replay = bool(body.get("replay"))
 
-    # A turn in flight on the SESSION, which ``slot.running`` cannot see: that
-    # flag tracks this slot's own task, while an inbound channel message runs a
-    # turn on the linked session with no dashboard task at all. Tearing the
-    # provider down under it loses that turn's output. Same probe, same order as
-    # the sibling reload route — one policy for one teardown.
-    provider = state.sessions.get_provider(key)
-    if provider is not None and provider.has_active_turn():
-        return web.json_response(
-            {"error": "a turn is in flight", "code": "turn_in_flight", "slot": name},
-            status=409,
-        )
+    # Every probe that protects this teardown, in the order the sibling reload
+    # route applies them.
+    denied_409 = _slot_teardown_denied(state, slot, name, key, "slot_reset_conversation")
+    if denied_409 is not None:
+        return denied_409
 
-    if slot.running:
-        return web.json_response(
-            {
-                "error": "a turn is running on this slot",
-                "code": "turn_in_flight",
-                "slot": name,
-            },
-            status=409,
-        )
-    if slot._in_stage_execution:
-        # An autopilot plan reads ``running`` False BETWEEN stages while it is
-        # still mid-plan, so ``running`` alone would discard the conversation the
-        # plan is writing into and cold-start its next stage.
-        return web.json_response(
-            {"error": "slot is orchestrating", "code": "slot_orchestrating", "slot": name},
-            status=409,
-        )
-    # ``discard_conversation`` is a full teardown: it also releases the shared
-    # sub-agent runtime the parent's children run on. ``slot.running`` is False
-    # while they keep going — the parent turn ends first — so nothing above
-    # catches it, and the same guard the reload route uses is what does.
-    attached = _subagents_attached_response(state, slot, key, "slot_reset_conversation")
-    if attached is not None:
-        return attached
-
-    # A fresh conversation is the one deliberate harness change. The binding
-    # belongs to the conversation being discarded (the teardown keeps it,
-    # because a recycle is not intent to change harness — this is), so the next
-    # turn is created on the configured default. Cleared BEFORE the discard's
-    # await: a turn admitted during that suspension would otherwise spawn on the
-    # old binding and re-bind it, undoing the reset.
-    slot.acp_backend = None
-    await state.sessions.discard_conversation(key, replay=replay)
-    # A pin that default cannot run goes with it, exactly as for any unbound
-    # slot.
-    drop_unrunnable_slot_model(slot, _slot_backend(slot))
-    # The metadata line still names the discarded binding until a save rewrites
-    # it, and the save skips a clean slot — so a restart before the next turn
-    # would rehydrate the harness this reset just left.
-    slot._dirty = True
-    state.push_slots_update()
+    # A fresh conversation hands the slot back to the configured default: the
+    # binding belongs to the conversation being discarded, and while a recycle is
+    # not intent to change harness, this is. ``None`` for the binding, so a pin
+    # that default cannot run goes with it exactly as for any unbound slot.
+    await _restart_slot_conversation(state, slot, key, None, replay=replay)
     sel().log_api_access(
         caller=request.get("app", "") or "dashboard",
         operation="slot_reset_conversation",
@@ -3958,6 +4008,20 @@ async def api_chat_slot_agent(request: web.Request) -> web.Response:
     return web.json_response(resp_body)
 
 
+def _configured_backend() -> str:
+    """``agent.acp_backend``, the harness a slot with no binding of its own gets.
+
+    A setting about FUTURE sessions, which is why every caller here reaches it
+    through a slot's own binding first. Resilient by design: a config that will
+    not load must not make a chat route fail, and the kiro harness is the floor
+    every installation has.
+    """
+    try:
+        return KiroCrewConfig.load().agent.acp_backend
+    except Exception:  # pragma: no cover - config load is resilient
+        return ACP_BACKEND_KIRO
+
+
 def _slot_backend(slot: "_ChatSlot") -> str:
     """The ACP backend *slot* actually runs on.
 
@@ -3969,10 +4033,7 @@ def _slot_backend(slot: "_ChatSlot") -> str:
     """
     if slot.acp_backend is not None:
         return slot.acp_backend
-    try:
-        return KiroCrewConfig.load().agent.acp_backend
-    except Exception:  # pragma: no cover - config load is resilient
-        return ACP_BACKEND_KIRO
+    return _configured_backend()
 
 
 def clear_unrunnable_slot_models(state: "DashboardState", backend: str) -> list[str]:
@@ -4352,6 +4413,215 @@ async def api_chat_slot_model(request: web.Request) -> web.Response:
             _broadcast_context_reset(state, slot.key, None)
         state.push_slots_update()
         return web.json_response({"ok": True, "model": model_name})
+
+
+#: Posted into a slot whose harness the caller deliberately changed while a
+#: conversation was open. A running ACP conversation cannot be moved between
+#: harnesses, so the switch discards the native session and the next turn
+#: replays Kiro Crew's own history into a fresh one on the new harness. Said in
+#: the transcript rather than done under it, the same reason the
+#: no-longer-selectable degrade posts its own notice.
+_BACKEND_SWITCH_NOTICE = (
+    "This conversation now runs on the {backend} harness. The previous session was "
+    "discarded; your next message starts a new one there, replaying the conversation "
+    "history into it."
+)
+
+#: Appended to the notice above when the harness change also dropped the slot's
+#: model pin. Model vocabularies are disjoint across harnesses and are never
+#: translated, so the pin is dropped to "inherit what the backend serves" rather
+#: than substituted — and a model the user picked is never taken away silently.
+_BACKEND_SWITCH_MODEL_NOTICE = (
+    " The {model} model is not available there, so it runs on whichever model that "
+    "harness serves by default."
+)
+
+
+def _post_backend_switch_notice(slot: _ChatSlot, backend: str, dropped_model: str) -> None:
+    """Tell the user, in the chat, that this conversation changed harness.
+
+    Tagged ``kind="compaction"`` like the sibling backend notice, so the
+    dashboard's follow-up ``[OPTIONS:]`` backward scan skips it. Best-effort: the
+    switch has already happened by the time this runs, and failing to narrate it
+    must not turn a completed switch into an error the caller retries.
+    """
+    text = _BACKEND_SWITCH_NOTICE.format(backend=backend or ACP_BACKEND_KIRO_LABEL)
+    if dropped_model:
+        text += _BACKEND_SWITCH_MODEL_NOTICE.format(model=dropped_model)
+    try:
+        slot.append("assistant", text, "msg msg-a", meta={"kind": "compaction"})
+    except Exception:
+        logger.debug("Failed to append backend-switch notice to slot %s", slot.key, exc_info=True)
+
+
+def _slot_holds_conversation(state: DashboardState, slot: _ChatSlot, session_key: str) -> bool:
+    """Whether *slot* has a native session a harness change would have to end.
+
+    Three answers to one question, because each covers a state the others miss: a
+    live provider (including one the eager spawn created before any message), a
+    resume pointer left by a previous process, and a transcript with real turns
+    in it. ``resumable_hint`` is the in-memory probe deliberately, not
+    ``resumable_sid``: the authoritative one prunes and can rewrite the map file,
+    which must not happen on the event loop.
+
+    Fails toward True. Reporting a conversation that is not there costs a
+    no-op discard and a notice; missing one that IS there is the silent harness
+    migration this binding exists to prevent.
+    """
+    try:
+        if state.sessions.get_provider(session_key) is not None:
+            return True
+        if state.sessions.resumable_hint(session_key):
+            return True
+    except Exception:  # pragma: no cover - a probe must never decide by failing
+        logger.debug("Session probe failed for slot %s", slot.key, exc_info=True)
+        return True
+    return _has_conversation(slot)
+
+
+async def api_chat_slot_backend(request: web.Request) -> web.Response:
+    """POST /api/chat/slots/{slot}/backend — set the harness this slot runs on.
+
+    Body: ``{"backend": "<id>"}``, one of the dashboard-selectable harnesses
+    (``ACP_BACKENDS_DASHBOARD_SELECTABLE`` — the same set the ``agent.acp_backend``
+    setting offers, so the two surfaces cannot name different harnesses, and
+    deliberately narrower than ``ACP_BACKENDS_SELECTABLE`` so this route does not
+    become a wider door onto an edition-only backend than the settings page is).
+    ``""`` IS the kiro harness, so the key's PRESENCE is what is required, never
+    its truthiness.
+
+    Writes the slot's own durable binding: the next session for this slot is
+    CREATED on that harness, across recycles and gateway restarts, until the
+    conversation ends. The configured default goes back to being what it says it
+    is — the default for a slot that has never been bound.
+
+    There is no ``live_session`` scope, and there must not be one. A running ACP
+    conversation cannot be moved between harnesses: the native session id belongs
+    to the process that issued it, and the model vocabularies on either side are
+    disjoint. So there are exactly two cases:
+
+    * **Nothing to end** — no live provider, no resume pointer, no turns in the
+      transcript, or the harness is not actually changing. The binding is
+      recorded and nothing is torn down (``reset: false``).
+    * **A live or resumable conversation** — the switch necessarily discards the
+      native session and continues by replay, which is the same teardown
+      ``reset-conversation`` performs and runs through the same helper rather
+      than a second copy of it. ``reset: true``, and the transcript says so, so
+      the harness never changes silently under an open conversation.
+
+    Refuses with 409 while a teardown would destroy work in flight
+    (``_slot_teardown_denied``), and additionally while a stop is in progress or
+    an approval card is pending — both are state belonging to the session this
+    may discard, and a caller that would have to answer a card for a session that
+    no longer exists is owed a refusal instead. The guards run unconditionally
+    rather than only on the teardown path: whether the slot has a conversation is
+    not the caller's to know, so the answer must not depend on it.
+
+    Response ``{"ok": true, "slot", "backend", "changed", "reset",
+    "model_cleared", "model"}``. ``model_cleared`` is how a dropped pin is
+    reported: dropping it is correct here — the target harness cannot run it —
+    but a model the user chose is never removed silently, so the caller is told
+    and can say so.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["slot"]
+    slot = state._slots.get(name)
+    if not slot:
+        return web.json_response({"error": "not found", "code": "slot_not_found"}, status=404)
+
+    # Resolved before authorization, because what has to be authorized is the
+    # SESSION this may discard, not the slot it was reached through — the same
+    # split, and the same shared policy, as the sibling teardown route.
+    key = effective_session_key(slot)
+    denied = _app_cancel_denied(request, slot, "slot_backend", key)
+    if denied is not None:
+        return denied
+
+    # Read the body HERE — after authorization, before the busy guards. Reading
+    # it is an await the CLIENT controls the duration of, and every guard below
+    # protects work that can START during a suspension, so the guards must be the
+    # last thing before the teardown.
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON", "code": "invalid_json"}, status=400)
+    if not isinstance(body, dict) or "backend" not in body:
+        return web.json_response(
+            {"error": "backend is required", "code": "backend_missing"}, status=400
+        )
+    requested = body["backend"]
+    if not isinstance(requested, str):
+        return web.json_response(
+            {"error": "backend must be a string", "code": "backend_invalid"}, status=400
+        )
+    if requested not in ACP_BACKENDS_DASHBOARD_SELECTABLE:
+        offered = ", ".join(b or ACP_BACKEND_KIRO_LABEL for b in ACP_BACKENDS_DASHBOARD_SELECTABLE)
+        # An explicit pick is refused, never quietly resolved onto something
+        # else: the caller asked for a specific harness and would otherwise be
+        # told a switch succeeded that did not happen.
+        return web.json_response(
+            {
+                "error": f"unknown backend; choose one of: {offered}",
+                "code": "backend_not_selectable",
+                "slot": name,
+            },
+            status=400,
+        )
+
+    # The harness this slot's next session would be created on today. A recorded
+    # binding that is no longer selectable degrades to the configured default
+    # with the reason logged rather than raising — the same rule the spawn path
+    # and rehydration apply — so a slot bound to an uninstalled harness can still
+    # be moved somewhere else instead of being stranded.
+    current = resolve_session_backend(slot.acp_backend, _configured_backend())
+    changed = requested != current
+
+    denied_409 = _slot_teardown_denied(state, slot, name, key, "slot_backend")
+    if denied_409 is not None:
+        return denied_409
+    if slot._stopping or slot._stop_state != "idle":
+        return web.json_response(
+            {"error": "a stop is in progress", "code": "slot_stopping", "slot": name}, status=409
+        )
+    if any(not f.done() for f in slot._approval_futures.values()):
+        return web.json_response(
+            {"error": "approval pending", "code": "slot_approval_pending", "slot": name},
+            status=409,
+        )
+
+    prior_model = slot.model
+    if changed and _slot_holds_conversation(state, slot, key):
+        model_cleared = await _restart_slot_conversation(state, slot, key, requested, replay=True)
+        reset = True
+        _post_backend_switch_notice(slot, requested, prior_model if model_cleared else "")
+    else:
+        # The cheap case: nothing exists on the old harness, so the binding is
+        # simply recorded. Dirty because the metadata line carries the binding
+        # and the periodic save skips a clean slot — without it a restart before
+        # the first turn would rehydrate the harness this call just left.
+        slot.acp_backend = requested
+        model_cleared = drop_unrunnable_slot_model(slot, requested)
+        slot._dirty = True
+        state.push_slots_update()
+        reset = False
+
+    sel().log_api_access(
+        caller=request.get("app", "") or "dashboard",
+        operation="slot_backend",
+        outcome="completed",
+        resources=f"slot={name} backend={requested or ACP_BACKEND_KIRO_LABEL} reset={reset}",
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "slot": name,
+            "backend": requested,
+            "changed": changed,
+            "reset": reset,
+            "model_cleared": model_cleared,
+            "model": slot.model,
+        }
+    )
 
 
 async def api_chat_slots_model(request: web.Request) -> web.Response:

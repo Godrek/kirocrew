@@ -22,7 +22,7 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 
 import kiro_crew
 from kiro_crew import beacon, dep_sync, platform_compat
-from kiro_crew.acp.types import ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX, ACP_BACKEND_KIRO
+from kiro_crew.acp.types import ACP_BACKENDS_DASHBOARD_SELECTABLE
 from kiro_crew.computer_use.types import MAX_SCREENSHOT_MAX_PX as _CU_MAX_SCREENSHOT_MAX_PX
 from kiro_crew.computer_use.types import MAX_TREE_NODES_LIMIT as _CU_MAX_TREE_NODES_LIMIT
 from kiro_crew.computer_use.types import MIN_SCREENSHOT_MAX_PX as _CU_MIN_SCREENSHOT_MAX_PX
@@ -1844,12 +1844,13 @@ _MOVED_CONFIG_FIELDS: dict[str, str] = {
 
 _EDITABLE_CONFIG: dict[str, dict] = {
     "agent.provider": {"type": "enum", "values": ["acp"]},
-    # ACP harness for new sessions. Keep this narrower than
-    # ACP_BACKENDS_SELECTABLE: the dashboard only exposes the three supported
-    # public choices and must not make edition-only backends selectable.
+    # ACP harness for new sessions. Narrower than ACP_BACKENDS_SELECTABLE by
+    # design — the dashboard exposes only the supported public choices and must
+    # not make an edition-only backend selectable — and it shares that set with
+    # the per-slot backend endpoint so the two cannot offer different harnesses.
     "agent.acp_backend": {
         "type": "enum",
-        "values": [ACP_BACKEND_KIRO, ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX],
+        "values": list(ACP_BACKENDS_DASHBOARD_SELECTABLE),
     },
     # Default model for new sessions. Membership can NOT be validated against a
     # fixed list: the real vocabulary is whatever the live kiro-cli advertises
