@@ -68,6 +68,8 @@ METHOD_SET_CONFIG_OPTION = "session/set_config_option"
 #: ``configId`` under which KAS exposes the session model. KAS implements no
 #: ``session/set_model``, so this is the only way to switch a model on it.
 MODEL_CONFIG_ID = "model"
+#: ``configId`` under which codex-acp exposes the model's reasoning effort.
+REASONING_EFFORT_CONFIG_ID = "reasoning_effort"
 
 #: JSON-RPC 2.0 reserved error code for an unrecognized method.
 JSONRPC_METHOD_NOT_FOUND = -32601

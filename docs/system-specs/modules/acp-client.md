@@ -106,8 +106,15 @@ pair; `AcpEvent.child_mcp_identity_trusted` exposes that verified-identity half
 
 The handshake also branches on the backend:
 
-- `protocolVersion` in the `initialize` request: kiro-cli expects the date string `"2025-08-22"`; claude-agent-acp expects an integer (`1`, per the upstream ACP SDK schema).
-- claude skips `session/set_mode` and uses `session/set_config_option` (configId `model`) instead of `session/set_model`.
+- `protocolVersion` in the `initialize` request: kiro-cli expects the date string
+  `"2025-08-22"`; the standard claude-agent-acp and codex-acp adapters expect an
+  integer (`1`, per the upstream ACP SDK schema).
+- claude-agent-acp and codex-acp skip `session/set_mode` and use
+  `session/set_config_option` (`configId: "model"`) instead of
+  `session/set_model`. codex-acp advertises its selectable/session model ids as
+  `model[reasoning_effort]`, but its model config option accepts only the base
+  model id; live switches and cold-start restoration split the advertised id
+  into ordered `model` and `reasoning_effort` config-option updates.
 
 Sending the wrong shape yields `-32602 Invalid params` or `-32601 Method not found`.
 
