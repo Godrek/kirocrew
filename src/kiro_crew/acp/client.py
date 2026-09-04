@@ -94,10 +94,12 @@ from kiro_crew.acp.types import (
     METHOD_SET_MODE,
     METHOD_SET_MODEL,
     METHOD_SUBAGENT_LIST_UPDATE,
+    MODEL_CONFIG_ID,
     OPTION_ALLOW_ALWAYS,
     OPTION_ALLOW_ONCE,
     OUTCOME_CANCELLED,
     OUTCOME_SELECTED,
+    REASONING_EFFORT_CONFIG_ID,
     STOP_REASON_COMPACTION_FAILED,
     STOP_REASON_END_TURN,
     UPDATE_AGENT_MESSAGE_CHUNK,
@@ -1321,6 +1323,23 @@ def _is_transient_raw_error(error: object, available_models: Sequence[str] | Non
     )
 
 
+_CODEX_MODEL_ID_RE = re.compile(r"^(?P<model>[^\[]+?)(?:\[(?P<effort>[^\]]+)\])?$")
+
+
+def _split_codex_model_id(model_id: str) -> tuple[str, str]:
+    """Split codex-acp's advertised ``model[effort]`` session identifier.
+
+    Codex exposes combined ids in ``availableModels`` and ``currentModelId``,
+    but ``session/set_config_option`` accepts the base model and reasoning
+    effort under separate config ids. A malformed or uncombined value stays a
+    model-only value so the adapter remains the authority that validates it.
+    """
+    match = _CODEX_MODEL_ID_RE.fullmatch(model_id)
+    if not match or not match.group("effort"):
+        return model_id, ""
+    return match.group("model"), match.group("effort")
+
+
 def advertised_model_ids(entries: object) -> list[str]:
     """Model ids out of an ``availableModels``-shaped list, defensively.
 
@@ -2459,6 +2478,16 @@ class AcpClient:
             channel_id,
         )
 
+    async def _set_standard_acp_model(self, model_id: str) -> None:
+        """Apply a model through the config-option shape its adapter accepts."""
+        if self._is_codex:
+            model, effort = _split_codex_model_id(model_id)
+            await self.set_config_option(MODEL_CONFIG_ID, model)
+            if effort:
+                await self.set_config_option(REASONING_EFFORT_CONFIG_ID, effort)
+            return
+        await self.set_config_option(MODEL_CONFIG_ID, model_id)
+
     async def set_model(self, model_id: str) -> None:
         """Switch model on a running session (used by warm pool post-claim)."""
         if not self._session_id:
@@ -2481,7 +2510,7 @@ class AcpClient:
             _rejected_log, _ = redact_credentials(_rejected_log)
             raise AcpModelUnavailable(_rejected_log, self._advertised_model_ids())
         if self._is_standard_acp:
-            await self.set_config_option("model", model_id)
+            await self._set_standard_acp_model(model_id)
         else:
             await self._send_request(
                 METHOD_SET_MODEL,
@@ -2608,7 +2637,7 @@ class AcpClient:
             self._model = DEFAULT_MODEL
             return
         if self._is_standard_acp:
-            await self.set_config_option("model", self._model)
+            await self._set_standard_acp_model(self._model)
         else:
             await self._send_request(
                 METHOD_SET_MODEL,
