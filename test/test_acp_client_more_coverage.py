@@ -44,6 +44,7 @@ from kiro_crew.acp.client import (
 )
 from kiro_crew.acp.types import (
     ACP_BACKEND_CLAUDE,
+    ACP_BACKEND_CODEX,
     EVENT_AGENT_SWITCHED,
     EVENT_COMPLETE,
     EVENT_MCP_OAUTH_REQUEST,
@@ -481,6 +482,48 @@ class TestModelAndConfigGuards:
         )
         assert client._model == "global.anthropic.claude-sonnet-4-6"
         assert client._resolved_model_id == "global.anthropic.claude-sonnet-4-6"
+
+    @pytest.mark.asyncio
+    async def test_codex_set_model_splits_model_and_reasoning_effort(self, tmp_path):
+        client = _client(tmp_path, acp_backend=ACP_BACKEND_CODEX)
+        client._session_id = "sid"
+        client.set_config_option = AsyncMock()
+
+        await client.set_model("gpt-5.6-sol[medium]")
+
+        assert client.set_config_option.await_args_list == [
+            (("model", "gpt-5.6-sol"),),
+            (("reasoning_effort", "medium"),),
+        ]
+        assert client._model == "gpt-5.6-sol[medium]"
+        assert client._resolved_model_id == "gpt-5.6-sol[medium]"
+
+    @pytest.mark.asyncio
+    async def test_codex_startup_splits_persisted_model_and_reasoning_effort(self, tmp_path):
+        client = _client(
+            tmp_path,
+            acp_backend=ACP_BACKEND_CODEX,
+            model="gpt-5.6-sol[medium]",
+        )
+        client._session_id = "sid"
+        client.set_config_option = AsyncMock()
+
+        await client._apply_startup_model()
+
+        assert client.set_config_option.await_args_list == [
+            (("model", "gpt-5.6-sol"),),
+            (("reasoning_effort", "medium"),),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_codex_startup_auto_does_not_set_config_options(self, tmp_path):
+        client = _client(tmp_path, acp_backend=ACP_BACKEND_CODEX, model="auto")
+        client._session_id = "sid"
+        client.set_config_option = AsyncMock()
+
+        await client._apply_startup_model()
+
+        client.set_config_option.assert_not_awaited()
 
     def test_capture_available_models_tolerates_odd_payloads(self, tmp_path):
         client = _client(tmp_path)
