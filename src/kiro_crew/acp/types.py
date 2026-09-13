@@ -275,12 +275,14 @@ ACP_BACKENDS_MODEL_CONFIG_OPTION = frozenset(
 ACP_BACKENDS_RUNTIME_MODEL_SWITCH = ACP_BACKENDS_SET_MODEL_METHOD | ACP_BACKENDS_MODEL_CONFIG_OPTION
 
 # Backends carrying a reasoning-effort control at all. The kiro family applies it
-# through the cli.json overlay at spawn; claude-agent-acp advertises an
-# ``effort`` entry in ``configOptions`` and takes it live. A harness outside this
-# set gets no effort UI even when the SELECTED model supports effort elsewhere —
-# effort is a property of the harness first and the model second, and kiro's
-# semantics are not portable by assumption (harness-parity H7).
-ACP_BACKENDS_REASONING_EFFORT = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS, ACP_BACKEND_CLAUDE})
+# through the cli.json overlay at spawn; claude-agent-acp and codex-acp advertise
+# config options and take it live. A harness outside this set gets no effort UI
+# even when the SELECTED model supports effort elsewhere — effort is a property
+# of the harness first and the model second, and kiro's semantics are not portable
+# by assumption (harness-parity H7).
+ACP_BACKENDS_REASONING_EFFORT = frozenset(
+    {ACP_BACKEND_KIRO, ACP_BACKEND_KAS, ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX}
+)
 
 # ── Provider labels ──
 # The backend identity key persisted in the session map. It indexes three

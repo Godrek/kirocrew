@@ -169,12 +169,11 @@ class TestCapabilityResolution:
         caps = backend_model_capabilities("not-a-backend", live_switch_confirmed=True)
         assert not caps.runtime_switch
 
-    def test_effort_is_a_harness_property_not_a_model_one(self):
-        # Codex has demonstrated no effort control, so it gets none even though
-        # models in other harnesses with similar names support one.
+    def test_effort_is_an_opt_in_harness_capability(self):
         assert backend_model_capabilities(ACP_BACKEND_KIRO).reasoning_effort
         assert backend_model_capabilities(ACP_BACKEND_CLAUDE).reasoning_effort
-        assert not backend_model_capabilities(ACP_BACKEND_CODEX).reasoning_effort
+        assert backend_model_capabilities(ACP_BACKEND_CODEX).reasoning_effort
+        assert not backend_model_capabilities("not-a-backend").reasoning_effort
 
 
 # ── Backend scoping of the live advertised list ──────────────────────────────
@@ -407,11 +406,11 @@ class TestCapabilitiesEndpoint:
         assert body["switch_scope"] == SCOPE_NEXT_SESSION
         assert body["selectable"] is True
 
-    def test_codex_reports_no_effort_control(self, monkeypatch):
+    def test_codex_reports_effort_control(self, monkeypatch):
         request = _request(query={"backend": ACP_BACKEND_CODEX})
         _with_config(monkeypatch, request)
         body = json.loads(_run(agents.api_model_capabilities(request)).body)
-        assert body["reasoning_effort"] is False
+        assert body["reasoning_effort"] is True
         assert body["selectable"] is False
 
 
